@@ -25,6 +25,18 @@ public final class ErrorCodeConstants {
     public static final String COMPRESSION_MODEL_UNAVAILABLE = "COMPRESSION_MODEL_UNAVAILABLE";
     /** 智能体模型选择尚未实现（预留）。 */
     public static final String AGENT_MODEL_RESOLUTION_RESERVED = "AGENT_MODEL_RESOLUTION_RESERVED";
+    /** 知识库导入失败。 */
+    public static final String KNOWLEDGE_IMPORT_FAILED = "KNOWLEDGE_IMPORT_FAILED";
+    /** 向量库调用失败。 */
+    public static final String VECTOR_STORE_ERROR = "VECTOR_STORE_ERROR";
+    /** 图数据库调用失败。 */
+    public static final String GRAPH_STORE_ERROR = "GRAPH_STORE_ERROR";
+    /** 知识导入批次不存在。 */
+    public static final String KNOWLEDGE_IMPORT_NOT_FOUND = "KNOWLEDGE_IMPORT_NOT_FOUND";
+    /** 嵌入模型不可用。 */
+    public static final String EMBEDDING_MODEL_UNAVAILABLE = "EMBEDDING_MODEL_UNAVAILABLE";
+    /** 抽取模型不可用。 */
+    public static final String EXTRACTION_MODEL_UNAVAILABLE = "EXTRACTION_MODEL_UNAVAILABLE";
 
     private ErrorCodeConstants() {
     }

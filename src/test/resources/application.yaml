@@ -21,3 +21,6 @@ spring:
 app:
   compress:
     enabled: false
+  knowledge:
+    milvus:
+      validate-schema-on-startup: false

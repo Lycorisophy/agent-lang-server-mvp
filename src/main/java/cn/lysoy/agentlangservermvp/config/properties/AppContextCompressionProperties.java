@@ -48,6 +48,9 @@ public class AppContextCompressionProperties {
         private boolean deterministicRulesEnabled = false;
         /** 非空时压缩解析固定使用该模型代码，否则按 {@link cn.lysoy.agentlangservermvp.service.ICompressionModelResolutionService} 默认选取。 */
         private String compressionModelCode = "";
+        // 摘要阶段总超时（秒），默认120
+        @Setter
+        private int summaryTotalTimeoutSeconds = 120;
 
         public void setCompressionModelCode(String compressionModelCode) {
             this.compressionModelCode = compressionModelCode != null ? compressionModelCode : "";

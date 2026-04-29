@@ -6,6 +6,7 @@ import cn.lysoy.agentlangservermvp.common.constants.MessageConstants;
 import cn.lysoy.agentlangservermvp.common.exception.BusinessException;
 import cn.lysoy.agentlangservermvp.config.AsyncExecutorConfiguration;
 import cn.lysoy.agentlangservermvp.config.properties.AppContextCompressionProperties;
+import cn.lysoy.agentlangservermvp.config.properties.KnowledgeStoreProperties;
 import cn.lysoy.agentlangservermvp.dto.chat.ChatHttpResponse;
 import cn.lysoy.agentlangservermvp.dto.chat.ChatStreamOutcome;
 import cn.lysoy.agentlangservermvp.dto.chat.OuterMessageView;
@@ -21,6 +22,9 @@ import cn.lysoy.agentlangservermvp.service.IChatService;
 import cn.lysoy.agentlangservermvp.service.IChatWriteService;
 import cn.lysoy.agentlangservermvp.service.InnerMessageCompressService;
 import cn.lysoy.agentlangservermvp.service.InnerMessageContextService;
+import cn.lysoy.agentlangservermvp.knowledge.dto.PermanentMemoryView;
+import cn.lysoy.agentlangservermvp.knowledge.service.IMemoryExtractionService;
+import cn.lysoy.agentlangservermvp.knowledge.service.IPermanentMemoryService;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import dev.langchain4j.data.message.AiMessage;
 import dev.langchain4j.data.message.ChatMessage;
@@ -31,6 +35,7 @@ import dev.langchain4j.model.chat.StreamingChatLanguageModel;
 import dev.langchain4j.model.output.Response;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
 import org.springframework.stereotype.Service;
@@ -57,7 +62,10 @@ public class ChatServiceImpl implements IChatService {
     private final IChatWriteService chatWriteService;
     private final InnerMessageContextService innerMessageContextService;
     private final AppContextCompressionProperties appContextCompressionProperties;
+    private final KnowledgeStoreProperties knowledgeStoreProperties;
     private final InnerMessageCompressService innerMessageCompressService;
+    private final ObjectProvider<IPermanentMemoryService> permanentMemoryServiceProvider;
+    private final ObjectProvider<IMemoryExtractionService> memoryExtractionServiceProvider;
     private final ThreadPoolTaskExecutor applicationTaskExecutor;
 
     public ChatServiceImpl(ChatSessionMapper chatSessionMapper,
@@ -68,6 +76,9 @@ public class ChatServiceImpl implements IChatService {
                            InnerMessageContextService innerMessageContextService,
                            AppContextCompressionProperties appContextCompressionProperties,
                            InnerMessageCompressService innerMessageCompressService,
+                           KnowledgeStoreProperties knowledgeStoreProperties,
+                           ObjectProvider<IPermanentMemoryService> permanentMemoryServiceProvider,
+                           ObjectProvider<IMemoryExtractionService> memoryExtractionServiceProvider,
                            @Qualifier(AsyncExecutorConfiguration.APPLICATION_TASK_EXECUTOR)
                            ThreadPoolTaskExecutor applicationTaskExecutor) {
         this.chatSessionMapper = chatSessionMapper;
@@ -78,6 +89,9 @@ public class ChatServiceImpl implements IChatService {
         this.innerMessageContextService = innerMessageContextService;
         this.appContextCompressionProperties = appContextCompressionProperties;
         this.innerMessageCompressService = innerMessageCompressService;
+        this.knowledgeStoreProperties = knowledgeStoreProperties;
+        this.permanentMemoryServiceProvider = permanentMemoryServiceProvider;
+        this.memoryExtractionServiceProvider = memoryExtractionServiceProvider;
         this.applicationTaskExecutor = applicationTaskExecutor;
     }
 
@@ -104,7 +118,7 @@ public class ChatServiceImpl implements IChatService {
         String sid = chatWriteService.saveUserRound(sessionId, userId, prompt);
         log.info("chat_sync_user_round_saved sessionId={}", sid);
 
-        List<ChatMessage> messages = buildChatContextForModel(sid, model);
+        List<ChatMessage> messages = buildChatContextForModel(sid, model, userId);
         log.info("chat_sync_context_ready sessionId={} chatMessageCount={}", sid, messages.size());
 
         String reply;
@@ -131,6 +145,7 @@ public class ChatServiceImpl implements IChatService {
         chatWriteService.saveAssistantRound(sid, reply);
         log.info("chat_sync_assistant_saved sessionId={}", sid);
         scheduleCompress(sid);
+        scheduleKnowledgeExtract(prompt, reply, userId);
         return new ChatHttpResponse(sid, reply, model.getModelCode());
     }
 
@@ -158,7 +173,7 @@ public class ChatServiceImpl implements IChatService {
         String sid = chatWriteService.saveUserRound(sessionId, userId, prompt);
         log.info("chat_stream_user_round_saved sessionId={}", sid);
 
-        List<ChatMessage> messages = buildChatContextForModel(sid, model);
+        List<ChatMessage> messages = buildChatContextForModel(sid, model, userId);
         log.info("chat_stream_context_ready sessionId={} chatMessageCount={}", sid, messages.size());
 
         StreamingChatLanguageModel streaming = langChainChatModelFactory.createStreaming(model);
@@ -209,6 +224,7 @@ public class ChatServiceImpl implements IChatService {
         chatWriteService.saveAssistantRound(sid, full);
         log.info("chat_stream_assistant_saved sessionId={}", sid);
         scheduleCompress(sid);
+        scheduleKnowledgeExtract(prompt, full, userId);
         return new ChatStreamOutcome(sid, full);
     }
 
@@ -247,7 +263,7 @@ public class ChatServiceImpl implements IChatService {
         }
     }
 
-    private List<ChatMessage> buildChatContextForModel(String sessionId, ModelRegistry model) {
+    private List<ChatMessage> buildChatContextForModel(String sessionId, ModelRegistry model, String userId) {
         if (Boolean.TRUE.equals(model.getIsMultimodal())) {
             log.info("multimodal_stub sessionId={} modelCode={} — 附件/多模态正文尚未接入", sessionId, model.getModelCode());
         }
@@ -264,6 +280,21 @@ public class ChatServiceImpl implements IChatService {
             );
         }
         List<ChatMessage> mapped = mapInnerRowsToMessages(truncate.messages());
+        if (knowledgeStoreProperties.isInjectPermanentMemories()) {
+            IPermanentMemoryService permanentMemoryService = permanentMemoryServiceProvider.getIfAvailable();
+            if (permanentMemoryService != null) {
+                String effectiveUserId = (userId == null || userId.isBlank()) ? "default" : userId;
+                List<PermanentMemoryView> memories = permanentMemoryService.listByUser(effectiveUserId);
+                if (!memories.isEmpty()) {
+                    StringBuilder sb = new StringBuilder("【用户永驻记忆】\n");
+                    for (PermanentMemoryView m : memories) {
+                        sb.append("- ").append(m.content()).append('\n');
+                    }
+                    mapped.add(0, SystemMessage.from(sb.toString()));
+                    log.info("inject_permanent_memories sessionId={} userId={} count={}", sessionId, effectiveUserId, memories.size());
+                }
+            }
+        }
         log.debug(
                 "build_chat_context sessionId={} llmRolesMapped={}",
                 sessionId,
@@ -315,5 +346,24 @@ public class ChatServiceImpl implements IChatService {
             return DEFAULT_HISTORY_LIMIT;
         }
         return Math.min(raw, MAX_HISTORY_LIMIT);
+    }
+
+    private void scheduleKnowledgeExtract(String prompt, String reply, String userId) {
+        if (!knowledgeStoreProperties.isAutoExtractAfterChat()) {
+            return;
+        }
+        IMemoryExtractionService extractionService = memoryExtractionServiceProvider.getIfAvailable();
+        if (extractionService == null) {
+            return;
+        }
+        String text = "user: " + prompt + "\nassistant: " + reply;
+        applicationTaskExecutor.execute(() -> {
+            try {
+                extractionService.extract(text, null, userId);
+                log.debug("knowledge_auto_extract_done userId={}", userId);
+            } catch (Exception ex) {
+                log.warn("knowledge_auto_extract_failed userId={}", userId, ex);
+            }
+        });
     }
 }

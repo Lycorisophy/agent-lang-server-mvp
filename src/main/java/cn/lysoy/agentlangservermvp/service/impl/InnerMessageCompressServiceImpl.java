@@ -24,19 +24,29 @@ import org.springframework.transaction.support.TransactionTemplate;
 
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.ReentrantLock;
+import java.util.stream.Collectors;
 
 /**
- * version0.3：异步压缩（工具过长清理、摘要分批）。压缩未达标时抛出异常以使事务回滚。
+ * version0.4：异步压缩（工具过长清理、摘要分批）。
+ * 优化：复用查询、批量删除、提示词增强、摘要阶段全局超时控制（不中断任务）。
  */
 @Service
 public class InnerMessageCompressServiceImpl implements InnerMessageCompressService {
 
     private static final Logger log = LogManager.getLogger(InnerMessageCompressServiceImpl.class);
+
+    /**
+     * 优化后的压缩提示词：保留关键信息，限制长度，减少发散
+     */
+    private static final String SUMMARY_SYSTEM_PROMPT =
+            "你是一个专业对话摘要引擎。将以下多轮对话压缩成一段中文摘要（不超过300字），" +
+                    "必须保留所有关键实体（人名、组织、地点）、日期、数字和决策，不得添加原文未出现的信息。";
 
     private final AppContextCompressionProperties properties;
     private final InnerMessageMapper innerMessageMapper;
@@ -71,26 +81,22 @@ public class InnerMessageCompressServiceImpl implements InnerMessageCompressServ
         String sid = Objects.requireNonNull(sessionId).trim();
 
         Runnable locked = () -> {
-            log.info(
-                    "compress_run_start sessionId={} thresholdTokens={} useRedisLock={}",
-                    sid,
-                    cfg.getTriggerThresholdTokens(),
-                    cfg.isUseRedis() && redisTemplateProvider.getIfAvailable() != null
-            );
+            log.info("compress_run_start sessionId={} thresholdTokens={} useRedisLock={}",
+                    sid, cfg.getTriggerThresholdTokens(),
+                    cfg.isUseRedis() && redisTemplateProvider.getIfAvailable() != null);
+
             List<InnerMessage> allOrdered = selectSessionMessages(sid);
             int totalRough = sumRoughTokens(allOrdered);
             log.debug("compress_precheck_token_sum sessionId={} totalRoughApprox={}", sid, totalRough);
+
             if (totalRough <= cfg.getTriggerThresholdTokens()) {
-                log.info(
-                        "compress_skip_below_threshold sessionId={} totalRoughApprox={} threshold={}",
-                        sid,
-                        totalRough,
-                        cfg.getTriggerThresholdTokens()
-                );
+                log.info("compress_skip_below_threshold sessionId={} totalRoughApprox={} threshold={}",
+                        sid, totalRough, cfg.getTriggerThresholdTokens());
                 return;
             }
+
             try {
-                transactionTemplate.executeWithoutResult(ts -> runCompressionInTransaction(sid, cfg));
+                transactionTemplate.executeWithoutResult(ts -> runCompressionInTransaction(sid, cfg, allOrdered));
             } catch (IllegalStateException ex) {
                 log.warn("compress_rolled_back session={}: {}", sid, ex.getMessage());
             } catch (DataAccessException ex) {
@@ -104,21 +110,21 @@ public class InnerMessageCompressServiceImpl implements InnerMessageCompressServ
     }
 
     private void runCompressionInTransaction(String sessionId,
-                                             AppContextCompressionProperties.CompressCfg cfg) {
+                                             AppContextCompressionProperties.CompressCfg cfg,
+                                             List<InnerMessage> allOrdered) {
         log.info("compress_tx_begin sessionId={}", sessionId);
-        pipelineDropLongTools(sessionId, cfg);
+
+        pipelineDropLongTools(allOrdered, cfg, sessionId);
         deterministicCleanupPlaceholder(cfg, sessionId);
 
-        List<InnerMessage> eligibleOrdered = filterNoneUncompressed(selectSessionMessages(sessionId));
+        int prePipe3 = sumRoughTokens(allOrdered);
+        log.info("compress_pre_pipe3_tokens sessionId={} sumRoughApprox={}", sessionId, prePipe3);
+
+        List<InnerMessage> eligibleOrdered = filterNoneUncompressed(allOrdered);
         List<List<InnerMessage>> rounds = splitUserRounds(eligibleOrdered);
         int preserve = cfg.getPreserveRecentRounds();
-        log.info(
-                "compress_round_split sessionId={} eligibleRows={} roundCount={} preserveRecentRounds={}",
-                sessionId,
-                eligibleOrdered.size(),
-                rounds.size(),
-                preserve
-        );
+        log.info("compress_round_split sessionId={} eligibleRows={} roundCount={} preserveRecentRounds={}",
+                sessionId, eligibleOrdered.size(), rounds.size(), preserve);
 
         if (rounds.size() <= preserve || rounds.isEmpty()) {
             log.info("compress_skip_recent_tail_protected session={} rounds={}", sessionId, rounds.size());
@@ -126,28 +132,33 @@ public class InnerMessageCompressServiceImpl implements InnerMessageCompressServ
         }
 
         ModelRegistry compressor = resolveCompressionModel();
-        log.info(
-                "compress_compressor_model modelCode={} provider={}",
-                compressor.getModelCode(),
-                compressor.getProvider()
-        );
+        log.info("compress_compressor_model modelCode={} provider={}",
+                compressor.getModelCode(), compressor.getProvider());
+
         List<List<InnerMessage>> toCompressRoundGroups = rounds.subList(0, rounds.size() - preserve);
         List<InnerMessage> toCompressFlatten = flattenRounds(toCompressRoundGroups);
         int batchSize = Math.max(1, cfg.getSummaryBatchSize());
 
-        log.info(
-                "compress_pipe3_plan sessionId={} rowsToFlatten={} batchSize={} minSavedRatio={}",
-                sessionId,
-                toCompressFlatten.size(),
-                batchSize,
-                cfg.getMinSavedTokenRatio()
-        );
+        // 摘要阶段总超时（秒），配置缺省 120 秒
+        int totalTimeoutSec = getSummaryTotalTimeoutSeconds(cfg);
+        long deadlineMillis = System.currentTimeMillis() + TimeUnit.SECONDS.toMillis(totalTimeoutSec);
+        // 安全缓冲时间：如果剩余不足 5 秒就不再开始新批次
+        long safeBufferMs = TimeUnit.SECONDS.toMillis(5);
 
-        int prePipe3 = sumRoughTokens(selectSessionMessages(sessionId));
-        log.info("compress_pre_pipe3_tokens sessionId={} sumRoughApprox={}", sessionId, prePipe3);
+        log.info("compress_pipe3_plan sessionId={} rowsToFlatten={} batchSize={} minSavedRatio={} totalTimeout={}s",
+                sessionId, toCompressFlatten.size(), batchSize, cfg.getMinSavedTokenRatio(), totalTimeoutSec);
 
         boolean ranPipe3 = false;
+        List<Long> batchDeleteIds = new ArrayList<>();
         for (int i = 0; i < toCompressFlatten.size(); i += batchSize) {
+            // ---------- 超时检查 ----------
+            long remaining = deadlineMillis - System.currentTimeMillis();
+            if (remaining < safeBufferMs) {
+                log.info("compress_pipe3_timeout_break sessionId={} remainingMs={} processedBatches={}",
+                        sessionId, remaining, i / batchSize);
+                break;  // 不再开始新批次，已提交的任务会正常执行完成
+            }
+
             int end = Math.min(i + batchSize, toCompressFlatten.size());
             List<InnerMessage> batch = toCompressFlatten.subList(i, end);
             if (batch.isEmpty()) {
@@ -155,35 +166,22 @@ public class InnerMessageCompressServiceImpl implements InnerMessageCompressServ
             }
             ranPipe3 = true;
             int originalLenSum = batch.stream().mapToInt(m -> ContentMetrics.charLength(m.getContent())).sum();
-            log.debug(
-                    "compress_batch_summarize_start sessionId={} batchIndex={}-{} msgs={} charSum={}",
-                    sessionId,
-                    i,
-                    end - 1,
-                    batch.size(),
-                    originalLenSum
-            );
+            log.debug("compress_batch_summarize_start sessionId={} batchIndex={}-{} msgs={} charSum={}",
+                    sessionId, i, end - 1, batch.size(), originalLenSum);
+
+            // 同步调用 LLM 生成摘要
             String summaryText = summarizeBatch(compressor, batch);
-            log.debug(
-                    "compress_batch_summarize_done sessionId={} summaryChars={}",
-                    sessionId,
-                    summaryText.length()
-            );
+            log.debug("compress_batch_summarize_done sessionId={} summaryChars={}",
+                    sessionId, summaryText.length());
 
-            InnerMessage summaryRow = new InnerMessage();
-            summaryRow.setSessionId(sessionId);
-            summaryRow.setRole(ChatConstants.ROLE_SYSTEM);
-            summaryRow.setContent(summaryText);
-            summaryRow.setContentLength(ContentMetrics.charLength(summaryText));
-            summaryRow.setCompressedLength(originalLenSum);
-            summaryRow.setCompressMethod(CompressMethodConstants.SUMMARY);
-            summaryRow.setTokenCount(ContentMetrics.roughTokenEstimate(summaryText));
-            summaryRow.setDelFlag(0);
+            InnerMessage summaryRow = buildSummaryRow(sessionId, summaryText, originalLenSum);
             innerMessageMapper.insert(summaryRow);
+            batchDeleteIds.addAll(batch.stream().map(InnerMessage::getId).collect(Collectors.toList()));
+        }
 
-            for (InnerMessage row : batch) {
-                innerMessageMapper.deleteById(row.getId());
-            }
+        if (!batchDeleteIds.isEmpty()) {
+            innerMessageMapper.deleteBatchIds(batchDeleteIds);
+            log.debug("compress_batch_delete_ids sessionId={} count={}", sessionId, batchDeleteIds.size());
         }
 
         if (!ranPipe3) {
@@ -193,7 +191,6 @@ public class InnerMessageCompressServiceImpl implements InnerMessageCompressServ
 
         int postPipe3 = sumRoughTokens(selectSessionMessages(sessionId));
         double savedRatio = prePipe3 > 0 ? (double) (prePipe3 - postPipe3) / (double) prePipe3 : 0.0;
-
         log.info("compress_pipe3_done session={} preTokensRough={} postTokensRough={} savedRatio={}",
                 sessionId, prePipe3, postPipe3, savedRatio);
 
@@ -202,33 +199,85 @@ public class InnerMessageCompressServiceImpl implements InnerMessageCompressServ
         }
     }
 
+    /**
+     * 解析压缩模型（根据配置）
+     */
     private ModelRegistry resolveCompressionModel() {
         String override = properties.getCompress().getCompressionModelCode();
         String code = override != null && !override.isBlank() ? override.trim() : null;
         return compressionModelResolutionService.resolve(code);
     }
 
+    /**
+     * 同步调用 LLM 生成摘要（使用优化后的提示词）
+     */
     private String summarizeBatch(ModelRegistry compressor, List<InnerMessage> batch) {
-        log.debug(
-                "summarize_batch_llm_call compressionModel={} batchSize={}",
-                compressor.getModelCode(),
-                batch.size()
-        );
+        log.debug("summarize_batch_llm_call compressionModel={} batchSize={}",
+                compressor.getModelCode(), batch.size());
         StringBuilder body = new StringBuilder();
         for (InnerMessage m : batch) {
             body.append("[").append(m.getRole()).append("]\n").append(m.getContent()).append("\n\n");
         }
         List<ChatMessage> prompt = List.of(
-                SystemMessage.from(
-                        "将下列对话段落压缩成一条简体中文摘要：保留实体、时间与关键动作；不要发散添加信息。"),
+                SystemMessage.from(SUMMARY_SYSTEM_PROMPT),
                 UserMessage.from(body.toString())
         );
-        try {
-            return langChainChatModelFactory.createSync(compressor).generate(prompt).content().text();
-        } catch (Exception e) {
-            throw new IllegalStateException("summarize_batch_failed", e);
+        return langChainChatModelFactory.createSync(compressor).generate(prompt).content().text();
+    }
+
+    private InnerMessage buildSummaryRow(String sessionId, String summaryText, int originalLenSum) {
+        InnerMessage summaryRow = new InnerMessage();
+        summaryRow.setSessionId(sessionId);
+        summaryRow.setRole(ChatConstants.ROLE_SYSTEM);
+        summaryRow.setContent(summaryText);
+        summaryRow.setContentLength(ContentMetrics.charLength(summaryText));
+        summaryRow.setCompressedLength(originalLenSum);
+        summaryRow.setCompressMethod(CompressMethodConstants.SUMMARY);
+        summaryRow.setTokenCount(ContentMetrics.roughTokenEstimate(summaryText));
+        summaryRow.setDelFlag(0);
+        return summaryRow;
+    }
+
+    private void pipelineDropLongTools(List<InnerMessage> allOrdered,
+                                       AppContextCompressionProperties.CompressCfg cfg,
+                                       String sessionId) {
+        List<Long> idsToDelete = new ArrayList<>();
+        Iterator<InnerMessage> it = allOrdered.iterator();
+        while (it.hasNext()) {
+            InnerMessage msg = it.next();
+            if (ChatConstants.ROLE_TOOL.equalsIgnoreCase(msg.getRole())) {
+                int len = ContentMetrics.charLength(msg.getContent());
+                if (len > cfg.getToolReplyMaxChars()) {
+                    idsToDelete.add(msg.getId());
+                    it.remove();
+                    log.info("compress_pipeline1_logical_delete_tool session={} id={}", sessionId, msg.getId());
+                }
+            }
+        }
+        if (!idsToDelete.isEmpty()) {
+            innerMessageMapper.deleteBatchIds(idsToDelete);
+            log.debug("compress_pipeline1_delete_tool_batch session={} count={}", sessionId, idsToDelete.size());
         }
     }
+
+    private void deterministicCleanupPlaceholder(AppContextCompressionProperties.CompressCfg cfg, String sessionId) {
+        if (cfg.isDeterministicRulesEnabled()) {
+            log.debug("compress_pipeline2_not_implemented session={}", sessionId);
+        }
+    }
+
+    /**
+     * 从配置获取摘要阶段总超时（秒），默认120秒
+     */
+    private int getSummaryTotalTimeoutSeconds(AppContextCompressionProperties.CompressCfg cfg) {
+        try {
+            return cfg.getSummaryTotalTimeoutSeconds();
+        } catch (Exception e) {
+            return 120;
+        }
+    }
+
+    // ==================== 工具方法 ====================
 
     private List<InnerMessage> selectSessionMessages(String sessionId) {
         return innerMessageMapper.selectList(
@@ -249,9 +298,6 @@ public class InnerMessageCompressServiceImpl implements InnerMessageCompressServ
         return out;
     }
 
-    /**
-     * 以 user 消息锚定「轮」：同一轮含该 user 之后至下一条 user 之前的所有消息。
-     */
     static List<List<InnerMessage>> splitUserRounds(List<InnerMessage> eligibleOrdered) {
         List<List<InnerMessage>> rounds = new ArrayList<>();
         List<InnerMessage> buffer = new ArrayList<>();
@@ -274,28 +320,6 @@ public class InnerMessageCompressServiceImpl implements InnerMessageCompressServ
             flat.addAll(r);
         }
         return flat;
-    }
-
-    private void pipelineDropLongTools(String sessionId, AppContextCompressionProperties.CompressCfg cfg) {
-        List<InnerMessage> tools = innerMessageMapper.selectList(
-                new LambdaQueryWrapper<InnerMessage>()
-                        .eq(InnerMessage::getSessionId, sessionId)
-                        .eq(InnerMessage::getRole, ChatConstants.ROLE_TOOL)
-        );
-        for (InnerMessage t : tools) {
-            Integer len = t.getContentLength();
-            int cmp = len != null ? len : ContentMetrics.charLength(t.getContent());
-            if (cmp > cfg.getToolReplyMaxChars()) {
-                innerMessageMapper.deleteById(t.getId());
-                log.info("compress_pipeline1_logical_delete_tool session={} id={}", sessionId, t.getId());
-            }
-        }
-    }
-
-    private void deterministicCleanupPlaceholder(AppContextCompressionProperties.CompressCfg cfg, String sessionId) {
-        if (cfg.isDeterministicRulesEnabled()) {
-            log.debug("compress_pipeline2_not_implemented session={}", sessionId);
-        }
     }
 
     static int sumRoughTokens(List<InnerMessage> rows) {

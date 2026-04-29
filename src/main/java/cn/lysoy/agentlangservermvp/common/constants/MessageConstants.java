@@ -20,6 +20,12 @@ public final class MessageConstants {
     public static final String MODEL_CHAT_DISABLED = "该模型未启用对话能力: %s";
     public static final String COMPRESSION_MODEL_UNAVAILABLE = "没有可用的压缩模型或模型未启用压缩能力: %s";
     public static final String AGENT_MODEL_RESOLUTION_RESERVED = "智能体模型解析尚未启用";
+    public static final String KNOWLEDGE_IMPORT_FAILED = "知识导入失败: %s";
+    public static final String VECTOR_STORE_ERROR = "向量库调用失败: %s";
+    public static final String GRAPH_STORE_ERROR = "图数据库调用失败: %s";
+    public static final String KNOWLEDGE_IMPORT_NOT_FOUND = "知识导入批次不存在: %s";
+    public static final String EMBEDDING_MODEL_UNAVAILABLE = "没有可用的嵌入模型: %s";
+    public static final String EXTRACTION_MODEL_UNAVAILABLE = "没有可用的抽取模型: %s";
 
     private MessageConstants() {
     }

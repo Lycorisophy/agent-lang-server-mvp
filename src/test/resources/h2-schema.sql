@@ -12,6 +12,8 @@ CREATE TABLE IF NOT EXISTS model_registry (
     is_compression BOOLEAN NOT NULL DEFAULT FALSE,
     is_agent BOOLEAN NOT NULL DEFAULT FALSE,
     is_multimodal BOOLEAN NOT NULL DEFAULT FALSE,
+    is_embedding BOOLEAN NOT NULL DEFAULT FALSE,
+    is_extraction BOOLEAN NOT NULL DEFAULT FALSE,
     del_flag TINYINT NOT NULL DEFAULT 0,
     create_by VARCHAR(64),
     update_by VARCHAR(64),
@@ -60,3 +62,42 @@ CREATE TABLE IF NOT EXISTS inner_message (
     update_at TIMESTAMP,
     create_at TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3)
 );
+
+CREATE TABLE IF NOT EXISTS knowledge_import (
+    import_id VARCHAR(50) PRIMARY KEY,
+    file_name VARCHAR(255),
+    chunk_count INT DEFAULT 0,
+    status VARCHAR(20) DEFAULT 'processing',
+    metadata CLOB,
+    del_flag TINYINT NOT NULL DEFAULT 0,
+    create_by VARCHAR(64),
+    update_by VARCHAR(64),
+    update_at TIMESTAMP,
+    create_at TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3)
+);
+CREATE INDEX IF NOT EXISTS idx_knowledge_import_status_create_at ON knowledge_import(status, create_at);
+
+CREATE TABLE IF NOT EXISTS knowledge_chunk_ref (
+    chunk_id VARCHAR(50) PRIMARY KEY,
+    import_id VARCHAR(50) NOT NULL,
+    chunk_index INT,
+    del_flag TINYINT NOT NULL DEFAULT 0,
+    create_by VARCHAR(64),
+    update_by VARCHAR(64),
+    update_at TIMESTAMP,
+    create_at TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    CONSTRAINT fk_knowledge_chunk_import FOREIGN KEY (import_id) REFERENCES knowledge_import(import_id)
+);
+CREATE INDEX IF NOT EXISTS idx_knowledge_chunk_ref_import_id ON knowledge_chunk_ref(import_id);
+
+CREATE TABLE IF NOT EXISTS permanent_memory (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    user_id VARCHAR(64) NOT NULL,
+    content CLOB NOT NULL,
+    del_flag TINYINT NOT NULL DEFAULT 0,
+    create_by VARCHAR(64),
+    update_by VARCHAR(64),
+    update_at TIMESTAMP,
+    create_at TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3)
+);
+CREATE INDEX IF NOT EXISTS idx_permanent_memory_user_create_at ON permanent_memory(user_id, create_at);

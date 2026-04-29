@@ -33,4 +33,10 @@ public class ModelRegistry extends BaseEntity {
 
     /** 是否支持多模态输入。 */
     private Boolean isMultimodal;
+
+    /** 是否可用于向量嵌入。 */
+    private Boolean isEmbedding;
+
+    /** 是否可用于事件/事实抽取。 */
+    private Boolean isExtraction;
 }

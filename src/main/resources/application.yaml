@@ -30,3 +30,19 @@ app:
     tool-reply-max-chars: 500
     deterministic-rules-enabled: false
     compression-model-code: ""
+  knowledge:
+    inject-permanent-memories: false
+    auto-extract-after-chat: false
+    milvus:
+      base-url: http://127.0.0.1:19530
+      token: root:Milvus
+      collection-name: knowledge_vectors
+      anns-field: embedding
+      default-top-k: 5
+      validate-schema-on-startup: true
+      expected-embedding-dim: 0
+    neo4j:
+      base-url: http://127.0.0.1:7474
+      database: neo4j
+      username: neo4j
+      password: neo4j

@@ -66,7 +66,7 @@ public class LangChainChatModelFactory {
         log.trace("langchain_registry_id={}", registry.getId());
     }
 
-    static String normalizeOpenAiCompatibleBaseUrl(ModelRegistry registry, String baseUrl) {
+    public static String normalizeOpenAiCompatibleBaseUrl(ModelRegistry registry, String baseUrl) {
         String s = trimTrailingSlash(baseUrl);
         if (isOllamaProvider(registry) && !s.endsWith("/v1")) {
             return s + "/v1";
