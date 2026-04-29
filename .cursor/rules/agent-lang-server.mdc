@@ -1,0 +1,33 @@
+---
+description: agent-lang-server-mvp 项目约定（SQL、分层、注释）
+globs: "**/*"
+alwaysApply: true
+---
+
+# agent-lang-server-mvp 协作规则
+
+## MySQL 脚本
+
+- 所有建表、改表、初始化数据的 **MySQL 脚本** 必须放在仓库 **`docs/sql/`** 下，使用清晰的文件名（如 `V002_xxx.sql`），不要散落在 `src/main/resources` 或其它目录。
+
+## 代码与注释
+
+- **每个类**须有类级 Javadoc，说明职责与关键约束（线程安全、事务边界、依赖的外部系统等）。
+- **对外 public 方法**及非显而易见的分支逻辑须有 Javadoc 或必要行内注释。
+- 变更保持与现有包结构、命名风格一致；避免无关重构。
+
+## 业务分层
+
+- **Controller**：只做参数绑定、HTTP/WS 语义与统一返回；不写复杂业务。
+- **Service**：编排事务边界（或通过独立 Facade 承担 `@Transactional`）、调用 LangChain4j 与持久化。
+- **Mapper**：数据访问；表名 `session` 等保留字在实体上用 `@TableName` 正确转义。
+
+## 对话数据
+
+- **外表** `outer_message`：用户可见历史。
+- **内表** `inner_message`：大模型上下文；三期异步压缩只动内表，外表保持用户原始观感。
+
+## 二期接口备忘
+
+- HTTP：`POST /api/chat/messages`，`GET /api/chat/history?sessionId=`
+- WebSocket：`/ws/chat`，入站 `type=chat`，出站 `delta` / `complete` / `error`

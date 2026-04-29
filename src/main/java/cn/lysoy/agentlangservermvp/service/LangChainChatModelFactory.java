@@ -1,0 +1,59 @@
+package cn.lysoy.agentlangservermvp.service;
+
+import cn.lysoy.agentlangservermvp.model.ModelRegistry;
+import dev.langchain4j.model.openai.OpenAiChatModel;
+import dev.langchain4j.model.openai.OpenAiStreamingChatModel;
+import org.springframework.stereotype.Component;
+
+import java.time.Duration;
+
+/**
+ * 基于 {@link ModelRegistry} 动态构建 LangChain4j 的 OpenAI 兼容客户端。
+ * <p>
+ * 国内多数厂商提供 OpenAI 兼容 HTTP 接口，通过 {@code base_url} + {@code model_name} + {@code api_key} 即可接入。
+ * </p>
+ */
+@Component
+public class LangChainChatModelFactory {
+
+    private static final Duration TIMEOUT = Duration.ofMinutes(3);
+
+    /**
+     * 构建同步聊天模型（用于 HTTP 一次性返回）。
+     */
+    public OpenAiChatModel createSync(ModelRegistry registry) {
+        var builder = OpenAiChatModel.builder()
+                .apiKey(registry.getApiKey())
+                .modelName(registry.getModelName())
+                .timeout(TIMEOUT);
+        if (registry.getBaseUrl() != null && !registry.getBaseUrl().isBlank()) {
+            builder.baseUrl(trimTrailingSlash(registry.getBaseUrl()));
+        }
+        return builder.build();
+    }
+
+    /**
+     * 构建流式聊天模型（用于 WebSocket 打字机效果）。
+     */
+    public OpenAiStreamingChatModel createStreaming(ModelRegistry registry) {
+        var builder = OpenAiStreamingChatModel.builder()
+                .apiKey(registry.getApiKey())
+                .modelName(registry.getModelName())
+                .timeout(TIMEOUT);
+        if (registry.getBaseUrl() != null && !registry.getBaseUrl().isBlank()) {
+            builder.baseUrl(trimTrailingSlash(registry.getBaseUrl()));
+        }
+        return builder.build();
+    }
+
+    /**
+     * 去除 baseUrl 末尾斜杠，减少厂商网关 404 概率。
+     */
+    private static String trimTrailingSlash(String baseUrl) {
+        String s = baseUrl.trim();
+        while (s.endsWith("/")) {
+            s = s.substring(0, s.length() - 1);
+        }
+        return s;
+    }
+}
