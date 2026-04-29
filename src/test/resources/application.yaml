@@ -1,5 +1,7 @@
 # 测试环境：使用内存 H2，避免 CI 本地未装 MySQL 时上下文启动失败。
 spring:
+  profiles:
+    active: test
   datasource:
     url: jdbc:h2:mem:agent_mvp_test;MODE=MySQL;DATABASE_TO_LOWER=TRUE;DB_CLOSE_DELAY=-1;NON_KEYWORDS=SESSION
     driver-class-name: org.h2.Driver

@@ -31,7 +31,7 @@ public class LangChainChatModelFactory {
                 .modelName(registry.getModelName())
                 .timeout(TIMEOUT);
         if (registry.getBaseUrl() != null && !registry.getBaseUrl().isBlank()) {
-            builder.baseUrl(trimTrailingSlash(registry.getBaseUrl()));
+            builder.baseUrl(normalizeOpenAiCompatibleBaseUrl(registry, registry.getBaseUrl()));
         }
         return builder.build();
     }
@@ -45,9 +45,25 @@ public class LangChainChatModelFactory {
                 .modelName(registry.getModelName())
                 .timeout(TIMEOUT);
         if (registry.getBaseUrl() != null && !registry.getBaseUrl().isBlank()) {
-            builder.baseUrl(trimTrailingSlash(registry.getBaseUrl()));
+            builder.baseUrl(normalizeOpenAiCompatibleBaseUrl(registry, registry.getBaseUrl()));
         }
         return builder.build();
+    }
+
+    /**
+     * Ollama 的 OpenAI 兼容入口为 {@code /v1/chat/completions}，LangChain4j 会向 {@code baseUrl + /chat/completions} 发请求，
+     * 故 {@code baseUrl} 须为 {@code .../v1}。若库中只填了 {@code http://host:11434} 会落到错误路径导致 HTTP 404。
+     */
+    static String normalizeOpenAiCompatibleBaseUrl(ModelRegistry registry, String baseUrl) {
+        String s = trimTrailingSlash(baseUrl);
+        if (isOllamaProvider(registry) && !s.endsWith("/v1")) {
+            return s + "/v1";
+        }
+        return s;
+    }
+
+    private static boolean isOllamaProvider(ModelRegistry registry) {
+        return registry.getProvider() != null && "ollama".equalsIgnoreCase(registry.getProvider().trim());
     }
 
     /**

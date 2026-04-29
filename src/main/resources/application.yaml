@@ -1,13 +1,9 @@
 spring:
   application:
     name: agent-lang-server-mvp
-  datasource:
-    # 默认占位；本机真实账号请复制 application-local.example.yaml 为 application-local.yaml 并启用 profile=local
-    url: jdbc:mysql://127.0.0.1:3306/agent_lang_server_mvp?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai
-    username: root
-    password: root
-    driver-class-name: com.mysql.cj.jdbc.Driver
-
+  # 未指定 spring.profiles.active 时使用 local，以加载 application-local.yaml（本机 MySQL）
+  profiles:
+    default: local
 mybatis-plus:
   configuration:
     map-underscore-to-camel-case: true
