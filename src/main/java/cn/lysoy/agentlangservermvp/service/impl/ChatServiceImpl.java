@@ -1,4 +1,4 @@
-package cn.lysoy.agentlangservermvp.service;
+package cn.lysoy.agentlangservermvp.service.impl;
 
 import cn.lysoy.agentlangservermvp.common.constants.ChatConstants;
 import cn.lysoy.agentlangservermvp.common.constants.ErrorCodeConstants;
@@ -7,6 +7,7 @@ import cn.lysoy.agentlangservermvp.common.exception.BusinessException;
 import cn.lysoy.agentlangservermvp.dto.chat.ChatHttpResponse;
 import cn.lysoy.agentlangservermvp.dto.chat.ChatStreamOutcome;
 import cn.lysoy.agentlangservermvp.dto.chat.OuterMessageView;
+import cn.lysoy.agentlangservermvp.integration.LangChainChatModelFactory;
 import cn.lysoy.agentlangservermvp.mapper.ChatSessionMapper;
 import cn.lysoy.agentlangservermvp.mapper.InnerMessageMapper;
 import cn.lysoy.agentlangservermvp.mapper.OuterMessageMapper;
@@ -14,6 +15,9 @@ import cn.lysoy.agentlangservermvp.model.ChatSession;
 import cn.lysoy.agentlangservermvp.model.InnerMessage;
 import cn.lysoy.agentlangservermvp.model.ModelRegistry;
 import cn.lysoy.agentlangservermvp.model.OuterMessage;
+import cn.lysoy.agentlangservermvp.service.IChatModelResolutionService;
+import cn.lysoy.agentlangservermvp.service.IChatService;
+import cn.lysoy.agentlangservermvp.service.IChatWriteService;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import dev.langchain4j.data.message.AiMessage;
 import dev.langchain4j.data.message.ChatMessage;
@@ -27,47 +31,46 @@ import org.springframework.stereotype.Service;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Consumer;
 
 /**
- * 对话编排：委托 {@link ChatWriteFacade} 做短事务落库；从 {@code inner_message} 拼装 LangChain4j 上下文并调用大模型。
+ * {@link IChatService} 实现：委托 {@link IChatWriteService} 落库，从 {@code inner_message} 拼装 LangChain4j 上下文并调用大模型。
  */
 @Service
-public class ChatService {
+public class ChatServiceImpl implements IChatService {
 
     private final ChatSessionMapper chatSessionMapper;
     private final OuterMessageMapper outerMessageMapper;
     private final InnerMessageMapper innerMessageMapper;
-    private final ChatModelResolutionService chatModelResolutionService;
+    private final IChatModelResolutionService chatModelResolutionService;
     private final LangChainChatModelFactory langChainChatModelFactory;
-    private final ChatWriteFacade chatWriteFacade;
+    private final IChatWriteService chatWriteService;
 
-    public ChatService(ChatSessionMapper chatSessionMapper,
-                       OuterMessageMapper outerMessageMapper,
-                       InnerMessageMapper innerMessageMapper,
-                       ChatModelResolutionService chatModelResolutionService,
-                       LangChainChatModelFactory langChainChatModelFactory,
-                       ChatWriteFacade chatWriteFacade) {
+    public ChatServiceImpl(ChatSessionMapper chatSessionMapper,
+                           OuterMessageMapper outerMessageMapper,
+                           InnerMessageMapper innerMessageMapper,
+                           IChatModelResolutionService chatModelResolutionService,
+                           LangChainChatModelFactory langChainChatModelFactory,
+                           IChatWriteService chatWriteService) {
         this.chatSessionMapper = chatSessionMapper;
         this.outerMessageMapper = outerMessageMapper;
         this.innerMessageMapper = innerMessageMapper;
         this.chatModelResolutionService = chatModelResolutionService;
         this.langChainChatModelFactory = langChainChatModelFactory;
-        this.chatWriteFacade = chatWriteFacade;
+        this.chatWriteService = chatWriteService;
     }
 
     /**
-     * HTTP 同步对话：整段助手回复一次性返回。
-     *
-     * @param sessionId 可选续聊会话 ID
-     * @param modelId   可选模型主键
-     * @param modelCode 可选模型代码
-     * @param prompt    用户输入
-     * @param userId    可选用户标识
-     * @return 会话 ID、完整回复、实际使用的模型代码
+     * HTTP 同步对话：用户消息落库后调用同步模型，再将完整助手回复落库并返回。
+     * <p>
+     * 【可异步化】若需进一步缩短 HTTP 阻塞时间，可在上游网关/队列先受理请求，再由消费者调用本逻辑；
+     * 或在保证事务一致的前提下，将「助手落库」改为异步事件（需额外补偿与失败重试设计）。
+     * </p>
      */
+    @Override
     public ChatHttpResponse chatSync(String sessionId, Long modelId, String modelCode, String prompt, String userId) {
         ModelRegistry model = chatModelResolutionService.resolve(modelId, modelCode);
-        String sid = chatWriteFacade.saveUserRound(sessionId, userId, prompt);
+        String sid = chatWriteService.saveUserRound(sessionId, userId, prompt);
         List<ChatMessage> messages = loadContextMessages(sid);
         String reply;
         try {
@@ -79,20 +82,24 @@ public class ChatService {
                     ex
             );
         }
-        chatWriteFacade.saveAssistantRound(sid, reply);
+        chatWriteService.saveAssistantRound(sid, reply);
         return new ChatHttpResponse(sid, reply, model.getModelCode());
     }
 
     /**
-     * WebSocket 流式对话：通过回调推送增量 token，结束时持久化助手消息并返回会话与全文。
-     *
-     * @param onDelta 收到模型增量文本时回调（单 WebSocket 会话内顺序调用）
-     * @return 服务端确定的会话 ID 与完整助手文本
+     * WebSocket 流式对话：用户轮次落库后，以流式模型回调 {@code onDelta}，结束后将完整回复落库。
+     * <p>
+     * 【可异步化】当前在 WebSocket 线程上执行整段推理；若上游 SDK 支持纯异步 API，可将
+     * {@code streaming.generate(...)} 提交到 {@code applicationTaskExecutor} 执行，但须保证
+     * {@code onDelta} 与 WebSocket 发送仍在有序线程或加锁（参见 {@link cn.lysoy.agentlangservermvp.websocket.ChatWebSocketHandler}），
+     * 并传递 MDC/租户上下文。
+     * </p>
      */
+    @Override
     public ChatStreamOutcome chatStream(String sessionId, Long modelId, String modelCode, String prompt, String userId,
-                                        java.util.function.Consumer<String> onDelta) {
+                                        Consumer<String> onDelta) {
         ModelRegistry model = chatModelResolutionService.resolve(modelId, modelCode);
-        String sid = chatWriteFacade.saveUserRound(sessionId, userId, prompt);
+        String sid = chatWriteService.saveUserRound(sessionId, userId, prompt);
         List<ChatMessage> messages = loadContextMessages(sid);
         StreamingChatLanguageModel streaming = langChainChatModelFactory.createStreaming(model);
         StringBuilder acc = new StringBuilder();
@@ -106,6 +113,9 @@ public class ChatService {
                 }
             }
 
+            /**
+             * 部分厂商实现仅在完成时给出完整文本；若此前无增量，则用此处文本兜底。
+             */
             @Override
             public void onComplete(Response<AiMessage> response) {
                 AiMessage ai = response != null ? response.content() : null;
@@ -127,18 +137,22 @@ public class ChatService {
             );
         }
         String full = acc.toString();
-        chatWriteFacade.saveAssistantRound(sid, full);
+        chatWriteService.saveAssistantRound(sid, full);
         return new ChatStreamOutcome(sid, full);
     }
 
     /**
-     * 按会话查询外表历史消息，供前端渲染聊天记录。
+     * 按会话查询外表历史，按创建时间升序，供前端渲染。
+     * <p>
+     * 【可异步化】当单会话消息量极大时，可改为分页查询或读从库，并在 Controller 层配合
+     * {@link org.springframework.web.servlet.mvc.method.annotation.StreamingResponseBody} 流式输出（非必须）。
+     * </p>
      */
+    @Override
     public List<OuterMessageView> listOuterHistory(String sessionId) {
         requireExistingSession(sessionId);
         LambdaQueryWrapper<OuterMessage> q = new LambdaQueryWrapper<OuterMessage>()
                 .eq(OuterMessage::getSessionId, sessionId)
-                .eq(OuterMessage::getDelFlag, 0)
                 .orderByAsc(OuterMessage::getCreateAt);
         List<OuterMessage> rows = outerMessageMapper.selectList(q);
         List<OuterMessageView> views = new ArrayList<>(rows.size());
@@ -148,12 +162,15 @@ public class ChatService {
         return views;
     }
 
+    /**
+     * 校验会话存在且未被逻辑删除（{@code selectById} 对已删行返回 {@code null}）。
+     */
     private void requireExistingSession(String sessionId) {
         if (sessionId == null || sessionId.isBlank()) {
             throw new BusinessException(ErrorCodeConstants.VALIDATION_ERROR, "sessionId 不能为空");
         }
         ChatSession existing = chatSessionMapper.selectById(sessionId.trim());
-        if (existing == null || !Integer.valueOf(0).equals(existing.getDelFlag())) {
+        if (existing == null) {
             throw new BusinessException(
                     ErrorCodeConstants.SESSION_NOT_FOUND,
                     MessageConstants.format(MessageConstants.SESSION_NOT_FOUND, sessionId)
@@ -162,12 +179,12 @@ public class ChatService {
     }
 
     /**
-     * 从 {@code inner_message} 读取未删除记录并转为 LangChain4j 消息列表。
+     * 读取内表消息并映射为 LangChain4j {@link ChatMessage} 列表，作为模型多轮上下文。
+     * 未识别的 {@code role} 将跳过，避免非法消息类型导致上游报错。
      */
     private List<ChatMessage> loadContextMessages(String sessionId) {
         LambdaQueryWrapper<InnerMessage> q = new LambdaQueryWrapper<InnerMessage>()
                 .eq(InnerMessage::getSessionId, sessionId)
-                .eq(InnerMessage::getDelFlag, 0)
                 .orderByAsc(InnerMessage::getCreateAt);
         List<InnerMessage> rows = innerMessageMapper.selectList(q);
         List<ChatMessage> messages = new ArrayList<>(rows.size());

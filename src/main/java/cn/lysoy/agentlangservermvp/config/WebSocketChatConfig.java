@@ -7,7 +7,10 @@ import org.springframework.web.socket.config.annotation.WebSocketConfigurer;
 import org.springframework.web.socket.config.annotation.WebSocketHandlerRegistry;
 
 /**
- * 注册对话 WebSocket 端点；与 MVC 并存，路径前缀 {@code /ws}。
+ * 注册对话 WebSocket 端点；与 MVC 并存，路径为 {@code /ws/chat}。
+ * <p>
+ * 【可异步化】若需 SockJS 降级或 STOMP 广播，可在此改为 {@code enableSimpleBroker} 等配置并拆分 Handler。
+ * </p>
  */
 @Configuration
 @EnableWebSocket
@@ -25,6 +28,6 @@ public class WebSocketChatConfig implements WebSocketConfigurer {
     @Override
     public void registerWebSocketHandlers(WebSocketHandlerRegistry registry) {
         registry.addHandler(chatWebSocketHandler, "/ws/chat")
-                .setAllowedOrigins("*");
+                .setAllowedOriginPatterns("*");
     }
 }

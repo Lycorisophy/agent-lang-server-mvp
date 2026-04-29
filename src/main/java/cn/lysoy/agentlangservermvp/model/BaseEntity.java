@@ -6,7 +6,10 @@ import lombok.Data;
 import java.time.LocalDateTime;
 
 /**
- * 基础审计实体，包含通用字段
+ * 通用审计与逻辑删除字段基类；业务实体均宜继承本类以保持字段一致。
+ * <p>
+ * {@code delFlag} 使用 MyBatis-Plus {@link TableLogic}，查询时默认附带未删除条件。
+ * </p>
  */
 @Data
 public abstract class BaseEntity {

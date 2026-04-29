@@ -7,7 +7,12 @@ CREATE TABLE IF NOT EXISTS model_registry (
     model_name VARCHAR(100) NOT NULL,
     api_key VARCHAR(255) NOT NULL,
     base_url VARCHAR(255),
-    is_active BOOLEAN DEFAULT TRUE
+    is_active BOOLEAN DEFAULT TRUE,
+    del_flag TINYINT NOT NULL DEFAULT 0,
+    create_by VARCHAR(64),
+    update_by VARCHAR(64),
+    update_at TIMESTAMP,
+    create_at TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3)
 );
 
 CREATE TABLE IF NOT EXISTS `session` (

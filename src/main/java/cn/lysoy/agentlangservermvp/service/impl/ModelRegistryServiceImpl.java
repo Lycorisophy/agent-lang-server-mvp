@@ -1,10 +1,12 @@
-package cn.lysoy.agentlangservermvp.service;
+package cn.lysoy.agentlangservermvp.service.impl;
 
 import cn.lysoy.agentlangservermvp.common.constants.ErrorCodeConstants;
 import cn.lysoy.agentlangservermvp.common.constants.MessageConstants;
 import cn.lysoy.agentlangservermvp.common.exception.BusinessException;
 import cn.lysoy.agentlangservermvp.mapper.ModelRegistryMapper;
 import cn.lysoy.agentlangservermvp.model.ModelRegistry;
+import cn.lysoy.agentlangservermvp.service.IConfigLoaderService;
+import cn.lysoy.agentlangservermvp.service.IModelRegistryService;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -12,35 +14,26 @@ import org.springframework.transaction.annotation.Transactional;
 import java.util.List;
 
 /**
- * 模型注册表相关业务：增删改查、缓存刷新、状态切换；Controller 仅做转发。
+ * {@link IModelRegistryService} 实现：持久化与缓存协同。
  */
 @Service
-public class ModelRegistryService {
+public class ModelRegistryServiceImpl implements IModelRegistryService {
 
-    private final ConfigLoaderService configLoaderService;
+    private final IConfigLoaderService configLoaderService;
     private final ModelRegistryMapper modelRegistryMapper;
 
-    public ModelRegistryService(ConfigLoaderService configLoaderService,
-                                ModelRegistryMapper modelRegistryMapper) {
+    public ModelRegistryServiceImpl(IConfigLoaderService configLoaderService,
+                                    ModelRegistryMapper modelRegistryMapper) {
         this.configLoaderService = configLoaderService;
         this.modelRegistryMapper = modelRegistryMapper;
     }
 
-    /**
-     * 列出缓存中的全部模型配置快照。
-     *
-     * @return 模型列表
-     */
+    @Override
     public List<ModelRegistry> listModels() {
         return configLoaderService.getAllModels();
     }
 
-    /**
-     * 按模型代码从缓存读取配置。
-     *
-     * @param modelCode 模型代码
-     * @return 模型实体
-     */
+    @Override
     public ModelRegistry getModelByCode(String modelCode) {
         ModelRegistry model = configLoaderService.getModelConfig(modelCode);
         if (model == null) {
@@ -52,12 +45,7 @@ public class ModelRegistryService {
         return model;
     }
 
-    /**
-     * 新增模型并刷新缓存。
-     *
-     * @param model 待持久化实体
-     * @return 持久化后的实体（含自增 id）
-     */
+    @Override
     @Transactional(rollbackFor = Exception.class)
     public ModelRegistry createModel(ModelRegistry model) {
         Long count = modelRegistryMapper.selectCount(
@@ -73,17 +61,13 @@ public class ModelRegistryService {
             model.setIsActive(true);
         }
         modelRegistryMapper.insert(model);
+        // 与 DB 写操作同一事务边界内同步刷新缓存，保证读模型接口立即可见。
+        // 【可异步化】若 refresh 耗时明显，可改为事务提交后事件 + @Async 刷新，需容忍极短时间窗口内缓存滞后。
         configLoaderService.refreshModels();
         return model;
     }
 
-    /**
-     * 按模型代码更新可写字段并刷新缓存。
-     *
-     * @param modelCode    路径中的模型代码
-     * @param updatedModel 请求体中的新字段
-     * @return 更新后的实体
-     */
+    @Override
     @Transactional(rollbackFor = Exception.class)
     public ModelRegistry updateModel(String modelCode, ModelRegistry updatedModel) {
         ModelRegistry existing = requireEntityByModelCode(modelCode);
@@ -100,10 +84,9 @@ public class ModelRegistryService {
     }
 
     /**
-     * 按模型代码删除并刷新缓存。
-     *
-     * @param modelCode 模型代码
+     * 按 {@code model_code} 删除注册记录并刷新缓存；删除行数为 0 时视为不存在。
      */
+    @Override
     @Transactional(rollbackFor = Exception.class)
     public void deleteModel(String modelCode) {
         int rows = modelRegistryMapper.delete(
@@ -119,21 +102,15 @@ public class ModelRegistryService {
     }
 
     /**
-     * 手动全量刷新模型缓存。
-     *
-     * @return 提示文案（常量）
+     * 手工触发全量刷新模型缓存。
      */
+    @Override
     public String refreshModelCache() {
         configLoaderService.refreshModels();
         return MessageConstants.CACHE_REFRESHED;
     }
 
-    /**
-     * 切换启用状态并刷新缓存。
-     *
-     * @param modelCode 模型代码
-     * @return 人类可读结果说明
-     */
+    @Override
     @Transactional(rollbackFor = Exception.class)
     public String toggleActive(String modelCode) {
         ModelRegistry model = requireEntityByModelCode(modelCode);
@@ -147,10 +124,7 @@ public class ModelRegistryService {
     }
 
     /**
-     * 按 {@code model_code} 查询数据库中的实体，不存在则抛出业务异常。
-     *
-     * @param modelCode 模型代码
-     * @return 实体
+     * 从数据库按业务码加载单条模型；不存在时抛出业务异常。
      */
     private ModelRegistry requireEntityByModelCode(String modelCode) {
         ModelRegistry existing = modelRegistryMapper.selectOne(

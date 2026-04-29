@@ -19,8 +19,11 @@ alwaysApply: true
 ## 业务分层
 
 - **Controller**：只做参数绑定、HTTP/WS 语义与统一返回；不写复杂业务。
-- **Service**：编排事务边界（或通过独立 Facade 承担 `@Transactional`）、调用 LangChain4j 与持久化。
-- **Mapper**：数据访问；表名 `session` 等保留字在实体上用 `@TableName` 正确转义。
+- **Service**：在 `cn.lysoy.agentlangservermvp.service` 包定义 **`I*` 接口**；实现类放在 **`service.impl`** 子包并标注 `@Service`。`@Transactional`、`@Scheduled`、`@PostConstruct` 等仅出现在实现类。Controller 与其它 Service **只注入接口类型**。
+- **Mapper**：数据访问；表名 `session` 等保留字在实体上用 `@TableName` 正确转义。禁止手写 **`SELECT *`**：使用 MyBatis-Plus `LambdaQueryWrapper` 或 XML 中**显式列清单**。
+- **实体**：所有与表映射的实体类须 **`extends BaseEntity`**（逻辑删除与审计字段统一在基类），子类加 `@EqualsAndHashCode(callSuper = true)`。
+- **集成组件**：非业务编排的 LangChain4j 工厂等可放在 `integration`（或 `support`）包，不必强行 `I*` 接口化，除非与多实现替换强相关。
+- **异步**：全局线程池在 `config/AsyncExecutorConfiguration`（`@EnableAsync`、`applicationTaskExecutor`）；适合异步的耗时点用 Javadoc 标注「可异步化」思路，落地时用 `@Async` 或显式提交线程池并处理事务与 MDC。
 
 ## 对话数据
 

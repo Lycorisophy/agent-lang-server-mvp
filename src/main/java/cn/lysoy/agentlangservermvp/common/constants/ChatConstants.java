@@ -14,7 +14,13 @@ public final class ChatConstants {
 
     /** WebSocket 入站类型：发起对话。 */
     public static final String WS_TYPE_CHAT = "chat";
+    /** WebSocket 入站类型：心跳探测。 */
+    public static final String WS_TYPE_PING = "ping";
 
+    /** WebSocket 出站：连接成功，告知协议要点。 */
+    public static final String WS_OUT_CONNECTED = "connected";
+    /** WebSocket 出站：心跳响应。 */
+    public static final String WS_OUT_PONG = "pong";
     /** WebSocket 出站：增量文本（打字机）。 */
     public static final String WS_OUT_DELTA = "delta";
     /** WebSocket 出站：整轮结束。 */

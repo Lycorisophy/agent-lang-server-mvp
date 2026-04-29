@@ -3,7 +3,7 @@ package cn.lysoy.agentlangservermvp.controller;
 import cn.lysoy.agentlangservermvp.common.api.ApiResult;
 import cn.lysoy.agentlangservermvp.common.constants.MdcConstants;
 import cn.lysoy.agentlangservermvp.model.ModelRegistry;
-import cn.lysoy.agentlangservermvp.service.ModelRegistryService;
+import cn.lysoy.agentlangservermvp.service.IModelRegistryService;
 import jakarta.validation.Valid;
 import org.slf4j.MDC;
 import org.springframework.http.HttpStatus;
@@ -13,15 +13,18 @@ import org.springframework.web.bind.annotation.*;
 import java.util.List;
 
 /**
- * 模型管理 REST 控制器：参数绑定与 HTTP 语义，业务委托给 {@link ModelRegistryService}。
+ * 模型管理 REST 控制器：参数绑定与 HTTP 语义，业务委托给 {@link IModelRegistryService}。
  */
 @RestController
 @RequestMapping("/api/models")
 public class ModelController {
 
-    private final ModelRegistryService modelRegistryService;
+    private final IModelRegistryService modelRegistryService;
 
-    public ModelController(ModelRegistryService modelRegistryService) {
+    /**
+     * @param modelRegistryService 模型业务接口，由 Spring 注入唯一实现
+     */
+    public ModelController(IModelRegistryService modelRegistryService) {
         this.modelRegistryService = modelRegistryService;
     }
 

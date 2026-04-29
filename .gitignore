@@ -31,3 +31,6 @@ build/
 
 ### VS Code ###
 .vscode/
+
+### 本地 Spring 配置（含数据库密码，勿提交） ###
+src/main/resources/application-local.yaml

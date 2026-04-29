@@ -1,33 +1,31 @@
-package cn.lysoy.agentlangservermvp.service;
+package cn.lysoy.agentlangservermvp.service.impl;
 
 import cn.lysoy.agentlangservermvp.common.constants.ErrorCodeConstants;
 import cn.lysoy.agentlangservermvp.common.constants.MessageConstants;
 import cn.lysoy.agentlangservermvp.common.exception.BusinessException;
 import cn.lysoy.agentlangservermvp.model.ModelRegistry;
+import cn.lysoy.agentlangservermvp.service.IChatModelResolutionService;
+import cn.lysoy.agentlangservermvp.service.IConfigLoaderService;
 import org.springframework.stereotype.Service;
 
 import java.util.Comparator;
 
 /**
- * 根据可选的模型主键或模型代码解析本次对话使用的 {@link ModelRegistry}；
- * 均未指定时选取一条「启用中」的模型作为默认（按 {@code model_code} 字典序稳定选取）。
+ * {@link IChatModelResolutionService} 实现：基于缓存中的模型列表解析本次对话所用模型。
  */
 @Service
-public class ChatModelResolutionService {
+public class ChatModelResolutionServiceImpl implements IChatModelResolutionService {
 
-    private final ConfigLoaderService configLoaderService;
+    private final IConfigLoaderService configLoaderService;
 
-    public ChatModelResolutionService(ConfigLoaderService configLoaderService) {
+    public ChatModelResolutionServiceImpl(IConfigLoaderService configLoaderService) {
         this.configLoaderService = configLoaderService;
     }
 
     /**
-     * 解析模型配置；显式指定的模型必须存在且处于启用状态。
-     *
-     * @param modelId   可选，数据库自增主键
-     * @param modelCode 可选，业务模型代码
-     * @return 已校验的模型注册信息
+     * 按优先级解析：{@code modelId} 精确匹配主键；否则 {@code modelCode}；均未指定则取默认启用模型。
      */
+    @Override
     public ModelRegistry resolve(Long modelId, String modelCode) {
         if (modelId != null) {
             return requireActive(
@@ -55,12 +53,15 @@ public class ChatModelResolutionService {
     }
 
     /**
-     * 从缓存中选取第一条启用模型；无任何启用模型时抛出业务异常。
+     * 在未显式指定模型时，从启用中的记录里选取 {@code create_at} 最新的一条作为默认（便于「最后接入的模型优先」）。
+     * <p>
+     * 【可异步化】本方法纯内存遍历；若未来模型数量极大，可维护单独索引结构或缓存「默认模型 id」并由定时任务异步更新。
+     * </p>
      */
     private ModelRegistry pickDefaultActiveModel() {
         return configLoaderService.getAllModels().stream()
                 .filter(m -> Boolean.TRUE.equals(m.getIsActive()))
-                .min(Comparator.comparing(ModelRegistry::getModelCode, Comparator.nullsLast(String::compareTo)))
+                .max(Comparator.comparing(ModelRegistry::getCreateAt, Comparator.nullsLast(Comparator.naturalOrder())))
                 .orElseThrow(() -> new BusinessException(
                         ErrorCodeConstants.NO_ACTIVE_MODEL,
                         MessageConstants.NO_ACTIVE_MODEL
@@ -68,7 +69,7 @@ public class ChatModelResolutionService {
     }
 
     /**
-     * 确保模型已启用，否则拒绝用于对话。
+     * 拒绝使用已禁用的模型参与对话。
      */
     private static ModelRegistry requireActive(ModelRegistry model) {
         if (!Boolean.TRUE.equals(model.getIsActive())) {

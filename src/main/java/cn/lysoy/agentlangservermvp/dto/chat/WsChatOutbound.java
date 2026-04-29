@@ -24,6 +24,34 @@ public record WsChatOutbound(
 ) {
 
     /**
+     * 连接建立后首帧，提示客户端可发送的 type 与字段。
+     */
+    public static WsChatOutbound connected(String message) {
+        return new WsChatOutbound(
+                ChatConstants.WS_OUT_CONNECTED,
+                null,
+                null,
+                null,
+                null,
+                message
+        );
+    }
+
+    /**
+     * 心跳响应帧。
+     */
+    public static WsChatOutbound pong() {
+        return new WsChatOutbound(
+                ChatConstants.WS_OUT_PONG,
+                null,
+                null,
+                null,
+                null,
+                null
+        );
+    }
+
+    /**
      * 构造增量推送帧。
      */
     public static WsChatOutbound delta(String chunk) {

@@ -12,7 +12,7 @@ import lombok.EqualsAndHashCode;
 @EqualsAndHashCode(callSuper = true)
 @Data
 @TableName("token_usage_plan")
-public class TokenUsagePlan extends BaseEntity{
+public class TokenUsagePlan extends BaseEntity {
     @TableId(type = IdType.AUTO)
     private Long id;
     private String modelCode;

@@ -12,7 +12,7 @@ import lombok.EqualsAndHashCode;
 @EqualsAndHashCode(callSuper = true)
 @Data
 @TableName("model_registry")
-public class ModelRegistry extends BaseEntity{
+public class ModelRegistry extends BaseEntity {
     @TableId(type = IdType.AUTO)
     private Long id;
     private String modelCode;

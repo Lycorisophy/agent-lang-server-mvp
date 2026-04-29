@@ -4,15 +4,15 @@ import com.baomidou.mybatisplus.annotation.IdType;
 import com.baomidou.mybatisplus.annotation.TableId;
 import com.baomidou.mybatisplus.annotation.TableName;
 import lombok.Data;
-
-import java.time.LocalDateTime;
+import lombok.EqualsAndHashCode;
 
 /**
  * 内表消息：实际参与大模型上下文拼装的内容（三期可在此表做压缩摘要）。
  */
+@EqualsAndHashCode(callSuper = true)
 @Data
 @TableName("inner_message")
-public class InnerMessage {
+public class InnerMessage extends BaseEntity {
 
     @TableId(type = IdType.AUTO)
     private Long id;
@@ -35,10 +35,4 @@ public class InnerMessage {
 
     /** Token 估算，用于配额与策略。 */
     private Integer tokenCount;
-
-    private Integer delFlag;
-    private String createBy;
-    private String updateBy;
-    private LocalDateTime updateAt;
-    private LocalDateTime createAt;
 }

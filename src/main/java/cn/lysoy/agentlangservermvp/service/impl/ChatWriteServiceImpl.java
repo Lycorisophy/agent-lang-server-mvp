@@ -1,4 +1,4 @@
-package cn.lysoy.agentlangservermvp.service;
+package cn.lysoy.agentlangservermvp.service.impl;
 
 import cn.lysoy.agentlangservermvp.common.constants.ChatConstants;
 import cn.lysoy.agentlangservermvp.common.constants.ErrorCodeConstants;
@@ -10,6 +10,7 @@ import cn.lysoy.agentlangservermvp.mapper.OuterMessageMapper;
 import cn.lysoy.agentlangservermvp.model.ChatSession;
 import cn.lysoy.agentlangservermvp.model.InnerMessage;
 import cn.lysoy.agentlangservermvp.model.OuterMessage;
+import cn.lysoy.agentlangservermvp.service.IChatWriteService;
 import cn.lysoy.agentlangservermvp.util.ContentMetrics;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -18,10 +19,10 @@ import java.time.LocalDateTime;
 import java.util.UUID;
 
 /**
- * 对话写库事务边界：会话创建/加载与外表、内表插入在同一短事务内提交，供 {@link ChatService} 调用。
+ * {@link IChatWriteService} 实现：短事务写入会话与双表消息。
  */
 @Service
-public class ChatWriteFacade {
+public class ChatWriteServiceImpl implements IChatWriteService {
 
     private static final int TITLE_MAX_LEN = 120;
 
@@ -29,19 +30,18 @@ public class ChatWriteFacade {
     private final OuterMessageMapper outerMessageMapper;
     private final InnerMessageMapper innerMessageMapper;
 
-    public ChatWriteFacade(ChatSessionMapper chatSessionMapper,
-                           OuterMessageMapper outerMessageMapper,
-                           InnerMessageMapper innerMessageMapper) {
+    public ChatWriteServiceImpl(ChatSessionMapper chatSessionMapper,
+                                OuterMessageMapper outerMessageMapper,
+                                InnerMessageMapper innerMessageMapper) {
         this.chatSessionMapper = chatSessionMapper;
         this.outerMessageMapper = outerMessageMapper;
         this.innerMessageMapper = innerMessageMapper;
     }
 
     /**
-     * 创建或加载会话并写入本轮用户的外表与内表消息。
-     *
-     * @return 会话 ID
+     * 创建或续用会话，并写入本轮用户消息到外表与内表（同一事务）。
      */
+    @Override
     @Transactional(rollbackFor = Exception.class)
     public String saveUserRound(String sessionId, String userId, String prompt) {
         ChatSession session = loadOrCreateSession(sessionId, userId, prompt);
@@ -51,20 +51,28 @@ public class ChatWriteFacade {
     }
 
     /**
-     * 写入本轮助手的外表与内表消息。
+     * 将本轮助手完整回复写入外表与内表（同一事务）。
+     * <p>
+     * 【可异步化】若后续引入「流式落库分段写入」，可将多次 insert/update 拆到队列消费者中异步执行，
+     * 需与 {@link cn.lysoy.agentlangservermvp.service.impl.ChatServiceImpl#chatStream} 的完成顺序协调。
+     * </p>
      */
+    @Override
     @Transactional(rollbackFor = Exception.class)
     public void saveAssistantRound(String sessionId, String reply) {
         insertOuter(sessionId, ChatConstants.ROLE_ASSISTANT, reply);
         insertInner(sessionId, ChatConstants.ROLE_ASSISTANT, reply);
     }
 
+    /**
+     * 逻辑删除会话在 {@link com.baomidou.mybatisplus.annotation.TableLogic} 下 {@link #selectById} 不会返回，故仅判断 null。
+     */
     private ChatSession loadOrCreateSession(String sessionId, String userId, String firstPrompt) {
         if (sessionId == null || sessionId.isBlank()) {
             return insertNewSession(userId, firstPrompt);
         }
         ChatSession existing = chatSessionMapper.selectById(sessionId.trim());
-        if (existing == null || !Integer.valueOf(0).equals(existing.getDelFlag())) {
+        if (existing == null) {
             throw new BusinessException(
                     ErrorCodeConstants.SESSION_NOT_FOUND,
                     MessageConstants.format(MessageConstants.SESSION_NOT_FOUND, sessionId)

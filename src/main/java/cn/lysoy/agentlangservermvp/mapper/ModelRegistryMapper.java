@@ -3,20 +3,14 @@ package cn.lysoy.agentlangservermvp.mapper;
 import cn.lysoy.agentlangservermvp.model.ModelRegistry;
 import com.baomidou.mybatisplus.core.mapper.BaseMapper;
 import org.apache.ibatis.annotations.Mapper;
-import org.apache.ibatis.annotations.Select;
-
-import java.util.List;
 
 /**
- * {@link ModelRegistry} 的 MyBatis-Plus 映射；扩展按业务定制的 SQL。
+ * {@link ModelRegistry} 的 MyBatis-Plus 映射。
+ * <p>
+ * 自定义查询请使用 {@link com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper}
+ * 或 XML 中<b>逐列写出</b>字段，禁止手写 {@code SELECT *}。
+ * </p>
  */
 @Mapper
 public interface ModelRegistryMapper extends BaseMapper<ModelRegistry> {
-    /**
-     * 查询当前所有启用中的模型记录。
-     *
-     * @return 启用模型列表
-     */
-    @Select("SELECT * FROM model_registry WHERE is_active = TRUE")
-    List<ModelRegistry> selectAllActive();
 }

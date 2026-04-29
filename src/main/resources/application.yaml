@@ -2,8 +2,8 @@ spring:
   application:
     name: agent-lang-server-mvp
   datasource:
-    # 本地开发请改为实际 MySQL，并先执行 docs/sql 下脚本
-    url: jdbc:mysql://127.0.0.1:3306/agent_lang?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai
+    # 默认占位；本机真实账号请复制 application-local.example.yaml 为 application-local.yaml 并启用 profile=local
+    url: jdbc:mysql://127.0.0.1:3306/agent_lang_server_mvp?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai
     username: root
     password: root
     driver-class-name: com.mysql.cj.jdbc.Driver

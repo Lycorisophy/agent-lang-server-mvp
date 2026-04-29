@@ -1,0 +1,12 @@
+# 复制为 application-local.yaml 后填写真实密码（application-local.yaml 已被 .gitignore 忽略）
+# 启动：mvn spring-boot:run -Dspring-boot.run.profiles=local
+
+spring:
+  config:
+    activate:
+      on-profile: local
+  datasource:
+    url: jdbc:mysql://127.0.0.1:3306/agent_lang_server_mvp?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&useSSL=false
+    username: root
+    password: CHANGE_ME
+    driver-class-name: com.mysql.cj.jdbc.Driver

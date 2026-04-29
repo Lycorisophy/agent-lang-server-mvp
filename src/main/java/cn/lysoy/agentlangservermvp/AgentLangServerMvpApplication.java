@@ -9,6 +9,10 @@ import org.springframework.scheduling.annotation.EnableScheduling;
  * <p>
  * 规划方向：langchain4j,langgraph4j 等多智能体能力（依赖与配置可按阶段追加）。
  * </p>
+ * <p>
+ * 异步执行线程池由 {@link cn.lysoy.agentlangservermvp.config.AsyncExecutorConfiguration} 声明，
+ * 与 {@link org.springframework.scheduling.annotation.EnableScheduling} 并存。
+ * </p>
  */
 @EnableScheduling
 @SpringBootApplication

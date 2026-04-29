@@ -1,7 +1,8 @@
-package cn.lysoy.agentlangservermvp.service;
+package cn.lysoy.agentlangservermvp.service.impl;
 
 import cn.lysoy.agentlangservermvp.mapper.ModelRegistryMapper;
 import cn.lysoy.agentlangservermvp.model.ModelRegistry;
+import cn.lysoy.agentlangservermvp.service.IConfigLoaderService;
 import jakarta.annotation.PostConstruct;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
@@ -11,14 +12,10 @@ import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * 模型配置缓存服务。
- * <p>
- * 负责在应用启动时从数据库加载所有启用的模型配置，并每隔 10 秒自动刷新缓存，
- * 确保模型列表与数据库保持最终一致。同时提供手动刷新接口。
- * </p>
+ * {@link IConfigLoaderService} 实现：内存缓存全量模型注册信息，定时与数据库对齐。
  */
 @Service
-public class ConfigLoaderService {
+public class ConfigLoaderServiceImpl implements IConfigLoaderService {
 
     private final ModelRegistryMapper registryMapper;
 
@@ -27,7 +24,7 @@ public class ConfigLoaderService {
      */
     private final Map<String, ModelRegistry> modelCache = new ConcurrentHashMap<>();
 
-    public ConfigLoaderService(ModelRegistryMapper registryMapper) {
+    public ConfigLoaderServiceImpl(ModelRegistryMapper registryMapper) {
         this.registryMapper = registryMapper;
     }
 
@@ -42,7 +39,10 @@ public class ConfigLoaderService {
     /**
      * 定时从数据库刷新模型缓存，默认每 10 秒执行一次。
      * <p>
-     * 刷新过程中会以数据库当前数据<b>全量覆盖</b>旧缓存，因此增、删、改都能生效。
+     * 【可异步化】若刷新耗时长或频率需降低，可将本方法体内逻辑委托给
+     * {@link cn.lysoy.agentlangservermvp.config.AsyncExecutorConfiguration#APPLICATION_TASK_EXECUTOR}
+     * 线程池执行（例如 {@code @Async} 或 {@code applicationTaskExecutor.submit}），
+     * 注意与 {@link #refreshModels()} 的可见性及缓存替换原子性（建议仍在本类用写锁或单线程串行刷新）。
      * </p>
      */
     @Scheduled(fixedRate = 10000)
@@ -51,37 +51,29 @@ public class ConfigLoaderService {
     }
 
     /**
-     * 手动触发刷新，将数据库中最新的模型信息同步到本地缓存。
+     * 从数据库加载全部未逻辑删除的模型并覆盖本地缓存。
      * <p>
-     * 该方法可直接由 Controller 或其他服务调用。
+     * MyBatis-Plus 对带 {@code @TableLogic} 的实体在 {@code selectList(null)} 时会自动附加未删除条件，
+     * 无需手写 {@code del_flag}。
      * </p>
      */
+    @Override
     public void refreshModels() {
-        List<ModelRegistry> list = registryMapper.selectList(null);  // 查询所有模型
+        List<ModelRegistry> list = registryMapper.selectList(null);
         Map<String, ModelRegistry> newCache = new ConcurrentHashMap<>();
         for (ModelRegistry model : list) {
             newCache.put(model.getModelCode(), model);
         }
         modelCache.clear();
         modelCache.putAll(newCache);
-        // 如有需要，可在此添加日志输出
     }
 
-    /**
-     * 根据模型代码获取单个模型配置。
-     *
-     * @param modelCode 模型代码，如 "deepseek-v3"
-     * @return 对应的 ModelRegistry，若不存在则返回 null
-     */
+    @Override
     public ModelRegistry getModelConfig(String modelCode) {
         return modelCache.get(modelCode);
     }
 
-    /**
-     * 获取当前缓存中所有模型配置的列表（快照）。
-     *
-     * @return 不可修改的模型列表
-     */
+    @Override
     public List<ModelRegistry> getAllModels() {
         return List.copyOf(modelCache.values());
     }

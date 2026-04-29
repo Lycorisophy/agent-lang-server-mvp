@@ -5,7 +5,7 @@ import cn.lysoy.agentlangservermvp.common.constants.MdcConstants;
 import cn.lysoy.agentlangservermvp.dto.chat.ChatHttpRequest;
 import cn.lysoy.agentlangservermvp.dto.chat.ChatHttpResponse;
 import cn.lysoy.agentlangservermvp.dto.chat.OuterMessageView;
-import cn.lysoy.agentlangservermvp.service.ChatService;
+import cn.lysoy.agentlangservermvp.service.IChatService;
 import jakarta.validation.Valid;
 import org.slf4j.MDC;
 import org.springframework.web.bind.annotation.*;
@@ -19,9 +19,12 @@ import java.util.List;
 @RequestMapping("/api/chat")
 public class ChatController {
 
-    private final ChatService chatService;
+    private final IChatService chatService;
 
-    public ChatController(ChatService chatService) {
+    /**
+     * @param chatService 对话编排接口
+     */
+    public ChatController(IChatService chatService) {
         this.chatService = chatService;
     }
 
