@@ -65,7 +65,7 @@ public class ChatWriteServiceImpl implements IChatWriteService {
     }
 
     /**
-     * 逻辑删除会话在 {@link com.baomidou.mybatisplus.annotation.TableLogic} 下 {@link #selectById} 不会返回，故仅判断 null。
+     * 逻辑删除会话在 {@link com.baomidou.mybatisplus.annotation.TableLogic} 下  不会返回，故仅判断 null。
      */
     private ChatSession loadOrCreateSession(String sessionId, String userId, String firstPrompt) {
         if (sessionId == null || sessionId.isBlank()) {
