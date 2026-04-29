@@ -47,6 +47,8 @@ import java.util.function.Consumer;
 public class ChatServiceImpl implements IChatService {
 
     private static final Logger log = LogManager.getLogger(ChatServiceImpl.class);
+    private static final int DEFAULT_HISTORY_LIMIT = 10;
+    private static final int MAX_HISTORY_LIMIT = 100;
 
     private final ChatSessionMapper chatSessionMapper;
     private final OuterMessageMapper outerMessageMapper;
@@ -211,14 +213,19 @@ public class ChatServiceImpl implements IChatService {
     }
 
     @Override
-    public List<OuterMessageView> listOuterHistory(String sessionId) {
-        log.debug("list_outer_history sessionId={}", sessionId);
+    public List<OuterMessageView> listOuterHistory(String sessionId, Long beforeId, Integer limit) {
+        int pageSize = normalizeHistoryLimit(limit);
+        log.debug("list_outer_history sessionId={} beforeId={} limit={}", sessionId, beforeId, pageSize);
         requireExistingSession(sessionId);
         LambdaQueryWrapper<OuterMessage> q = new LambdaQueryWrapper<OuterMessage>()
-                .eq(OuterMessage::getSessionId, sessionId)
-                .orderByAsc(OuterMessage::getCreateAt);
+                .eq(OuterMessage::getSessionId, sessionId);
+        if (beforeId != null && beforeId > 0) {
+            q.lt(OuterMessage::getId, beforeId);
+        }
+        q.orderByDesc(OuterMessage::getId)
+                .last("LIMIT " + pageSize);
         List<OuterMessage> rows = outerMessageMapper.selectList(q);
-        log.info("list_outer_history_done sessionId={} rows={}", sessionId, rows.size());
+        log.info("list_outer_history_done sessionId={} beforeId={} rows={}", sessionId, beforeId, rows.size());
         List<OuterMessageView> views = new ArrayList<>(rows.size());
         for (OuterMessage row : rows) {
             views.add(new OuterMessageView(row.getId(), row.getSessionId(), row.getRole(), row.getContent(), row.getCreateAt()));
@@ -301,5 +308,12 @@ public class ChatServiceImpl implements IChatService {
                 log.warn("compress_async_failed sessionId={}", sessionId, ex);
             }
         });
+    }
+
+    private static int normalizeHistoryLimit(Integer raw) {
+        if (raw == null || raw <= 0) {
+            return DEFAULT_HISTORY_LIMIT;
+        }
+        return Math.min(raw, MAX_HISTORY_LIMIT);
     }
 }

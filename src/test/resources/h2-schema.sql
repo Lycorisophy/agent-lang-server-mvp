@@ -42,6 +42,8 @@ CREATE TABLE IF NOT EXISTS outer_message (
     update_at TIMESTAMP,
     create_at TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3)
 );
+CREATE INDEX IF NOT EXISTS idx_outer_session_id ON outer_message(session_id, id DESC);
+CREATE INDEX IF NOT EXISTS idx_outer_session_create_at_desc ON outer_message(session_id, create_at DESC);
 
 CREATE TABLE IF NOT EXISTS inner_message (
     id BIGINT AUTO_INCREMENT PRIMARY KEY,

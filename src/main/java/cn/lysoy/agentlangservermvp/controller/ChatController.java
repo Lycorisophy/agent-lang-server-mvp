@@ -49,10 +49,12 @@ public class ChatController {
     }
 
     /**
-     * 查询指定会话下全部外表消息（用户可见历史）。
+     * 外表历史瀑布流：默认返回最近 10 条；向上翻页携带当前最早 id（beforeId）继续查更早消息。
      */
     @GetMapping("/history")
-    public ApiResult<List<OuterMessageView>> history(@RequestParam("sessionId") String sessionId) {
-        return ApiResult.success(chatService.listOuterHistory(sessionId), currentRequestId());
+    public ApiResult<List<OuterMessageView>> history(@RequestParam("sessionId") String sessionId,
+                                                     @RequestParam(value = "beforeId", required = false) Long beforeId,
+                                                     @RequestParam(value = "limit", required = false) Integer limit) {
+        return ApiResult.success(chatService.listOuterHistory(sessionId, beforeId, limit), currentRequestId());
     }
 }
