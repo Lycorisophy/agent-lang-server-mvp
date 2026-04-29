@@ -1,5 +1,11 @@
 # 测试环境：使用内存 H2，避免 CI 本地未装 MySQL 时上下文启动失败。
+# 单元测试不显式拉起 Redis：排除自动配置（压缩仍为关闭，仅用本地锁）。
 spring:
+  autoconfigure:
+    exclude:
+      - org.springframework.boot.autoconfigure.data.redis.RedisAutoConfiguration
+      - org.springframework.boot.autoconfigure.data.redis.RedisReactiveAutoConfiguration
+      - org.springframework.boot.autoconfigure.data.redis.RedisRepositoriesAutoConfiguration
   profiles:
     active: test
   datasource:
@@ -11,3 +17,7 @@ spring:
     init:
       mode: always
       schema-locations: classpath:h2-schema.sql
+
+app:
+  compress:
+    enabled: false

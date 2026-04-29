@@ -6,6 +6,8 @@ import cn.lysoy.agentlangservermvp.common.exception.BusinessException;
 import cn.lysoy.agentlangservermvp.model.ModelRegistry;
 import cn.lysoy.agentlangservermvp.service.IChatModelResolutionService;
 import cn.lysoy.agentlangservermvp.service.IConfigLoaderService;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 import org.springframework.stereotype.Service;
 
 import java.util.Comparator;
@@ -15,6 +17,8 @@ import java.util.Comparator;
  */
 @Service
 public class ChatModelResolutionServiceImpl implements IChatModelResolutionService {
+
+    private static final Logger log = LogManager.getLogger(ChatModelResolutionServiceImpl.class);
 
     private final IConfigLoaderService configLoaderService;
 
@@ -27,16 +31,25 @@ public class ChatModelResolutionServiceImpl implements IChatModelResolutionServi
      */
     @Override
     public ModelRegistry resolve(Long modelId, String modelCode) {
+        log.debug("resolve_model_requested modelId={} modelCode={}", modelId, modelCode);
         if (modelId != null) {
-            return requireActive(
+            ModelRegistry m = requireChatCapable(requireActive(
                     configLoaderService.getAllModels().stream()
-                            .filter(m -> modelId.equals(m.getId()))
+                            .filter(row -> modelId.equals(row.getId()))
                             .findFirst()
                             .orElseThrow(() -> new BusinessException(
                                     ErrorCodeConstants.MODEL_NOT_FOUND,
                                     MessageConstants.format(MessageConstants.MODEL_NOT_FOUND, "id=" + modelId)
                             ))
+            ));
+            log.info(
+                    "resolve_model_by_id id={} -> modelCode={} isActive={} isChat={}",
+                    modelId,
+                    m.getModelCode(),
+                    m.getIsActive(),
+                    m.getIsChat()
             );
+            return m;
         }
         if (modelCode != null && !modelCode.isBlank()) {
             String code = modelCode.trim();
@@ -47,25 +60,51 @@ public class ChatModelResolutionServiceImpl implements IChatModelResolutionServi
                         MessageConstants.format(MessageConstants.MODEL_NOT_FOUND, code)
                 );
             }
-            return requireActive(byCode);
+            ModelRegistry m = requireChatCapable(requireActive(byCode));
+            log.info(
+                    "resolve_model_by_code code={} -> id={} isActive={} isChat={}",
+                    code,
+                    m.getId(),
+                    m.getIsActive(),
+                    m.getIsChat()
+            );
+            return m;
         }
-        return pickDefaultActiveModel();
+        ModelRegistry def = pickDefaultActiveModel();
+        log.info(
+                "resolve_model_default -> modelCode={} id={} createAt={}",
+                def.getModelCode(),
+                def.getId(),
+                def.getCreateAt()
+        );
+        return def;
     }
 
     /**
-     * 在未显式指定模型时，从启用中的记录里选取 {@code create_at} 最新的一条作为默认（便于「最后接入的模型优先」）。
-     * <p>
-     * 【可异步化】本方法纯内存遍历；若未来模型数量极大，可维护单独索引结构或缓存「默认模型 id」并由定时任务异步更新。
-     * </p>
+     * 在未显式指定模型时，从启用且具备对话能力的记录里选取 {@code create_at} 最新的一条。
      */
     private ModelRegistry pickDefaultActiveModel() {
         return configLoaderService.getAllModels().stream()
                 .filter(m -> Boolean.TRUE.equals(m.getIsActive()))
+                .filter(m -> Boolean.TRUE.equals(m.getIsChat()))
                 .max(Comparator.comparing(ModelRegistry::getCreateAt, Comparator.nullsLast(Comparator.naturalOrder())))
                 .orElseThrow(() -> new BusinessException(
                         ErrorCodeConstants.NO_ACTIVE_MODEL,
                         MessageConstants.NO_ACTIVE_MODEL
                 ));
+    }
+
+    /**
+     * 拒绝使用未启用对话标记的模型（version0.3 能力标识）。
+     */
+    private static ModelRegistry requireChatCapable(ModelRegistry model) {
+        if (!Boolean.TRUE.equals(model.getIsChat())) {
+            throw new BusinessException(
+                    ErrorCodeConstants.MODEL_CHAT_DISABLED,
+                    MessageConstants.format(MessageConstants.MODEL_CHAT_DISABLED, model.getModelCode())
+            );
+        }
+        return model;
     }
 
     /**

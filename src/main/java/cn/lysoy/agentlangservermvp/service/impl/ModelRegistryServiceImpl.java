@@ -60,6 +60,9 @@ public class ModelRegistryServiceImpl implements IModelRegistryService {
         if (model.getIsActive() == null) {
             model.setIsActive(true);
         }
+        if (model.getIsChat() == null) {
+            model.setIsChat(true);
+        }
         modelRegistryMapper.insert(model);
         // 与 DB 写操作同一事务边界内同步刷新缓存，保证读模型接口立即可见。
         // 【可异步化】若 refresh 耗时明显，可改为事务提交后事件 + @Async 刷新，需容忍极短时间窗口内缓存滞后。
@@ -77,6 +80,18 @@ public class ModelRegistryServiceImpl implements IModelRegistryService {
         existing.setIsActive(updatedModel.getIsActive());
         if (updatedModel.getProvider() != null) {
             existing.setProvider(updatedModel.getProvider());
+        }
+        if (updatedModel.getIsChat() != null) {
+            existing.setIsChat(updatedModel.getIsChat());
+        }
+        if (updatedModel.getIsCompression() != null) {
+            existing.setIsCompression(updatedModel.getIsCompression());
+        }
+        if (updatedModel.getIsAgent() != null) {
+            existing.setIsAgent(updatedModel.getIsAgent());
+        }
+        if (updatedModel.getIsMultimodal() != null) {
+            existing.setIsMultimodal(updatedModel.getIsMultimodal());
         }
         modelRegistryMapper.updateById(existing);
         configLoaderService.refreshModels();

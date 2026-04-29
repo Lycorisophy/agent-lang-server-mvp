@@ -1,6 +1,7 @@
 package cn.lysoy.agentlangservermvp.service.impl;
 
 import cn.lysoy.agentlangservermvp.common.constants.ChatConstants;
+import cn.lysoy.agentlangservermvp.common.constants.CompressMethodConstants;
 import cn.lysoy.agentlangservermvp.common.constants.ErrorCodeConstants;
 import cn.lysoy.agentlangservermvp.common.constants.MessageConstants;
 import cn.lysoy.agentlangservermvp.common.exception.BusinessException;
@@ -12,6 +13,8 @@ import cn.lysoy.agentlangservermvp.model.InnerMessage;
 import cn.lysoy.agentlangservermvp.model.OuterMessage;
 import cn.lysoy.agentlangservermvp.service.IChatWriteService;
 import cn.lysoy.agentlangservermvp.util.ContentMetrics;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -23,6 +26,8 @@ import java.util.UUID;
  */
 @Service
 public class ChatWriteServiceImpl implements IChatWriteService {
+
+    private static final Logger log = LogManager.getLogger(ChatWriteServiceImpl.class);
 
     private static final int TITLE_MAX_LEN = 120;
 
@@ -44,9 +49,12 @@ public class ChatWriteServiceImpl implements IChatWriteService {
     @Override
     @Transactional(rollbackFor = Exception.class)
     public String saveUserRound(String sessionId, String userId, String prompt) {
+        int promptChars = prompt == null ? 0 : prompt.length();
+        log.info("write_user_round_start sessionIdParam={} userId={} promptChars={}", sessionId, userId, promptChars);
         ChatSession session = loadOrCreateSession(sessionId, userId, prompt);
         insertOuter(session.getId(), ChatConstants.ROLE_USER, prompt);
         insertInner(session.getId(), ChatConstants.ROLE_USER, prompt);
+        log.info("write_user_round_done sessionId={} outer+inner_inserted", session.getId());
         return session.getId();
     }
 
@@ -60,8 +68,27 @@ public class ChatWriteServiceImpl implements IChatWriteService {
     @Override
     @Transactional(rollbackFor = Exception.class)
     public void saveAssistantRound(String sessionId, String reply) {
+        saveAssistantRound(sessionId, reply, null);
+    }
+
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public void saveAssistantRound(String sessionId, String reply, String reasoningContent) {
+        int replyChars = reply == null ? 0 : reply.length();
+        boolean hasThought = reasoningContent != null && !reasoningContent.isBlank();
+        log.info(
+                "write_assistant_round_start sessionId={} replyChars={} hasThought={}",
+                sessionId,
+                replyChars,
+                hasThought
+        );
         insertOuter(sessionId, ChatConstants.ROLE_ASSISTANT, reply);
-        insertInner(sessionId, ChatConstants.ROLE_ASSISTANT, reply);
+        if (hasThought) {
+            insertInner(sessionId, ChatConstants.ROLE_ASSISTANT_THOUGHT, reasoningContent.trim());
+            log.debug("write_assistant_thought_inserted sessionId={}", sessionId);
+        }
+        insertInner(sessionId, ChatConstants.ROLE_ASSISTANT_REPLY, reply);
+        log.info("write_assistant_round_done sessionId={}", sessionId);
     }
 
     /**
@@ -69,7 +96,9 @@ public class ChatWriteServiceImpl implements IChatWriteService {
      */
     private ChatSession loadOrCreateSession(String sessionId, String userId, String firstPrompt) {
         if (sessionId == null || sessionId.isBlank()) {
-            return insertNewSession(userId, firstPrompt);
+            ChatSession created = insertNewSession(userId, firstPrompt);
+            log.info("session_created_new id={} userId={}", created.getId(), userId);
+            return created;
         }
         ChatSession existing = chatSessionMapper.selectById(sessionId.trim());
         if (existing == null) {
@@ -78,6 +107,7 @@ public class ChatWriteServiceImpl implements IChatWriteService {
                     MessageConstants.format(MessageConstants.SESSION_NOT_FOUND, sessionId)
             );
         }
+        log.debug("session_reuse id={}", existing.getId());
         return existing;
     }
 
@@ -111,6 +141,9 @@ public class ChatWriteServiceImpl implements IChatWriteService {
         outerMessageMapper.insert(m);
     }
 
+    /**
+     * 内表写入：未压缩内容标记 {@link CompressMethodConstants#NONE}。
+     */
     private void insertInner(String sessionId, String role, String content) {
         InnerMessage m = new InnerMessage();
         m.setSessionId(sessionId);
@@ -118,6 +151,7 @@ public class ChatWriteServiceImpl implements IChatWriteService {
         m.setContent(content);
         m.setContentLength(ContentMetrics.charLength(content));
         m.setTokenCount(ContentMetrics.roughTokenEstimate(content));
+        m.setCompressMethod(CompressMethodConstants.NONE);
         m.setDelFlag(0);
         m.setCreateAt(LocalDateTime.now());
         innerMessageMapper.insert(m);

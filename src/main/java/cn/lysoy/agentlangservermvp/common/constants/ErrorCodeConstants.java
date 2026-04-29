@@ -19,6 +19,12 @@ public final class ErrorCodeConstants {
     public static final String NO_ACTIVE_MODEL = "NO_ACTIVE_MODEL";
     /** 调用大模型上游失败。 */
     public static final String LLM_UPSTREAM_ERROR = "LLM_UPSTREAM_ERROR";
+    /** 模型未启用对话能力。 */
+    public static final String MODEL_CHAT_DISABLED = "MODEL_CHAT_DISABLED";
+    /** 压缩模型不可用或未启用压缩能力。 */
+    public static final String COMPRESSION_MODEL_UNAVAILABLE = "COMPRESSION_MODEL_UNAVAILABLE";
+    /** 智能体模型选择尚未实现（预留）。 */
+    public static final String AGENT_MODEL_RESOLUTION_RESERVED = "AGENT_MODEL_RESOLUTION_RESERVED";
 
     private ErrorCodeConstants() {
     }

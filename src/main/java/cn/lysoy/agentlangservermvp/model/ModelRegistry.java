@@ -21,4 +21,16 @@ public class ModelRegistry extends BaseEntity {
     private String apiKey;
     private String baseUrl;
     private Boolean isActive;
+
+    /** 是否可用于对话。 */
+    private Boolean isChat;
+
+    /** 是否可用于压缩场景（如摘要）。 */
+    private Boolean isCompression;
+
+    /** 是否可用于智能体（工具调用等）。 */
+    private Boolean isAgent;
+
+    /** 是否支持多模态输入。 */
+    private Boolean isMultimodal;
 }

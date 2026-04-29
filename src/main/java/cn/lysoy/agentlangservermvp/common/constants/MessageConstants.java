@@ -15,8 +15,11 @@ public final class MessageConstants {
     public static final String VALIDATION_FAILED = "参数校验失败";
     public static final String INTERNAL_ERROR = "系统繁忙，请稍后重试";
     public static final String SESSION_NOT_FOUND = "会话不存在或已删除: %s";
-    public static final String NO_ACTIVE_MODEL = "未配置任何启用中的大模型，请先维护 model_registry。";
+    public static final String NO_ACTIVE_MODEL = "未配置任何「启用且可用于对话」的大模型，请在 model_registry 中设置 is_active 与 is_chat。";
     public static final String LLM_UPSTREAM_ERROR = "大模型调用失败: %s";
+    public static final String MODEL_CHAT_DISABLED = "该模型未启用对话能力: %s";
+    public static final String COMPRESSION_MODEL_UNAVAILABLE = "没有可用的压缩模型或模型未启用压缩能力: %s";
+    public static final String AGENT_MODEL_RESOLUTION_RESERVED = "智能体模型解析尚未启用";
 
     private MessageConstants() {
     }

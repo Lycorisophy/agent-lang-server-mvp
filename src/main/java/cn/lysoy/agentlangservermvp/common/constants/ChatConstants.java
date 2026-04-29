@@ -7,8 +7,14 @@ public final class ChatConstants {
 
     /** 外表 / 内表用户消息角色。 */
     public static final String ROLE_USER = "user";
-    /** 助手回复角色。 */
+    /** 助手回复角色（与旧数据兼容）。 */
     public static final String ROLE_ASSISTANT = "assistant";
+    /** 深度思考文本（推理内容），内表。 */
+    public static final String ROLE_ASSISTANT_THOUGHT = "assistant/thought";
+    /** 对外可见的最终回复正文，内表。 */
+    public static final String ROLE_ASSISTANT_REPLY = "assistant/reply";
+    /** 工具结果（预留，管道一可逻辑删除过长内容）。 */
+    public static final String ROLE_TOOL = "tool";
     /** 系统或压缩摘要角色（内表）。 */
     public static final String ROLE_SYSTEM = "system";
 

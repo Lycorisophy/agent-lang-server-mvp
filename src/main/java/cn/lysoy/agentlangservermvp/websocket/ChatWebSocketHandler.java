@@ -7,8 +7,8 @@ import cn.lysoy.agentlangservermvp.dto.chat.WsChatInbound;
 import cn.lysoy.agentlangservermvp.dto.chat.WsChatOutbound;
 import cn.lysoy.agentlangservermvp.service.IChatService;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 import org.springframework.stereotype.Component;
 import org.springframework.web.socket.CloseStatus;
 import org.springframework.web.socket.TextMessage;
@@ -25,7 +25,7 @@ import org.springframework.web.socket.handler.TextWebSocketHandler;
 @Component
 public class ChatWebSocketHandler extends TextWebSocketHandler {
 
-    private static final Logger log = LoggerFactory.getLogger(ChatWebSocketHandler.class);
+    private static final Logger log = LogManager.getLogger(ChatWebSocketHandler.class);
 
     /** 连接成功后的协议说明（单行 JSON 提示，便于客户端联调）。 */
     private static final String CONNECTED_HINT =
@@ -44,6 +44,7 @@ public class ChatWebSocketHandler extends TextWebSocketHandler {
      */
     @Override
     public void afterConnectionEstablished(WebSocketSession session) throws Exception {
+        log.info("ws_connected sessionId={} remote={}", session.getId(), session.getRemoteAddress());
         sendJson(session, WsChatOutbound.connected(CONNECTED_HINT));
     }
 
@@ -70,17 +71,26 @@ public class ChatWebSocketHandler extends TextWebSocketHandler {
         }
         String type = inbound.type().trim();
         if (ChatConstants.WS_TYPE_PING.equalsIgnoreCase(type)) {
+            log.trace("ws_ping sessionId={}", session.getId());
             sendJson(session, WsChatOutbound.pong());
             return;
         }
         if (!ChatConstants.WS_TYPE_CHAT.equalsIgnoreCase(type)) {
-            log.debug("忽略未知 type: {}", type);
+            log.debug("ws_ignore_unknown_type sessionId={} type={}", session.getId(), type);
             return;
         }
         if (inbound.prompt() == null || inbound.prompt().isBlank()) {
             sendJson(session, WsChatOutbound.error("VALIDATION_ERROR", "prompt 不能为空"));
             return;
         }
+        log.info(
+                "ws_chat_start sessionId={} wsSession={} modelId={} modelCode={} promptChars={}",
+                inbound.sessionId(),
+                session.getId(),
+                inbound.modelId(),
+                inbound.modelCode(),
+                inbound.prompt() == null ? 0 : inbound.prompt().length()
+        );
         try {
             ChatStreamOutcome outcome = chatService.chatStream(
                     inbound.sessionId(),
@@ -90,11 +100,17 @@ public class ChatWebSocketHandler extends TextWebSocketHandler {
                     inbound.userId(),
                     chunk -> sendJsonQuiet(session, WsChatOutbound.delta(chunk))
             );
+            log.info(
+                    "ws_chat_done outcomeSession={} replyChars={}",
+                    outcome.sessionId(),
+                    outcome.fullReply() == null ? 0 : outcome.fullReply().length()
+            );
             sendJson(session, WsChatOutbound.complete(outcome.sessionId(), outcome.fullReply()));
         } catch (BusinessException ex) {
+            log.warn("ws_chat_business_error code={} msg={}", ex.getCode(), ex.getMessage());
             sendJson(session, WsChatOutbound.error(ex.getCode(), ex.getMessage()));
         } catch (Exception ex) {
-            log.error("WebSocket 对话失败", ex);
+            log.error("ws_chat_internal_failure wsSession={}", session.getId(), ex);
             sendJson(session, WsChatOutbound.error("INTERNAL_ERROR", ex.getMessage()));
         }
     }

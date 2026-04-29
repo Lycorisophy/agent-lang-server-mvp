@@ -4,6 +4,29 @@ spring:
   # 未指定 spring.profiles.active 时使用 local，以加载 application-local.yaml（本机 MySQL）
   profiles:
     default: local
+  # 默认不启用 Redis 自动配置：未起 Redis 时仍可启动；压缩任务将使用 JVM 内存锁。
+  # 若需分布式锁，请移除本 exclude 并配置 spring.data.redis.*，且将 app.compress.use-redis 设为 true（见同文件）。
+  autoconfigure:
+    exclude:
+      - org.springframework.boot.autoconfigure.data.redis.RedisAutoConfiguration
+      - org.springframework.boot.autoconfigure.data.redis.RedisReactiveAutoConfiguration
+      - org.springframework.boot.autoconfigure.data.redis.RedisRepositoriesAutoConfiguration
 mybatis-plus:
   configuration:
     map-underscore-to-camel-case: true
+
+# version0.3：上下文上限与异步压缩（压缩默认关闭；开启需可用的压缩模型与本机或使用 Redis）
+app:
+  context:
+    max-tokens: 8000
+  compress:
+    enabled: false
+    use-redis: false
+    trigger-threshold-tokens: 7000
+    min-saved-token-ratio: 0.3
+    preserve-recent-rounds: 4
+    summary-batch-size: 6
+    lock-ttl-seconds: 30
+    tool-reply-max-chars: 500
+    deterministic-rules-enabled: false
+    compression-model-code: ""
